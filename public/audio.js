@@ -1,359 +1,360 @@
-/* ── DISC WARS AUDIO ENGINE ──────────────────────────────────────────── */
-/* Synthesized TRON-style score + procedural crowd chants via Web Audio   */
+/* ── DISC WARS AUDIO ENGINE — Techno-Pop / Daft Punk TRON style ──────── */
 
 const Audio = (() => {
   let ctx = null;
-  let masterGain, musicGain, sfxGain;
-  let musicNodes = [];
-  let drumLoop  = null;
-  let arpeLoop  = null;
-  let bassLoop  = null;
-  let padLoop   = null;
+  let master, musicBus, sfxBus;
+  let schedulerTimer = null;
+  let nextBarTime   = 0;
+  let barIndex      = 0;
+  let isFinal       = false;
+  let chantTimer    = null;
 
+  // ── init ──────────────────────────────────────────────────────────────
   function ensure() {
     if (ctx) return;
     ctx = new (window.AudioContext || window.webkitAudioContext)();
-    masterGain = ctx.createGain(); masterGain.gain.value = 0.7; masterGain.connect(ctx.destination);
-    musicGain  = ctx.createGain(); musicGain.gain.value  = 0.45; musicGain.connect(masterGain);
-    sfxGain    = ctx.createGain(); sfxGain.gain.value    = 0.9;  sfxGain.connect(masterGain);
+
+    master   = ctx.createGain(); master.gain.value   = 0.72; master.connect(ctx.destination);
+    musicBus = ctx.createGain(); musicBus.gain.value = 0.5;  musicBus.connect(master);
+    sfxBus   = ctx.createGain(); sfxBus.gain.value   = 0.9;  sfxBus.connect(master);
   }
 
-  // ── helpers ──────────────────────────────────────────────────────────
-
-  function osc(type, freq, gainVal, dest, start, dur) {
+  // ── low-level helpers ─────────────────────────────────────────────────
+  function note(type, freq, amp, dest, t, dur, attack) {
     const o = ctx.createOscillator();
     const g = ctx.createGain();
-    o.type      = type;
-    o.frequency.value = freq;
-    g.gain.setValueAtTime(0, start);
-    g.gain.linearRampToValueAtTime(gainVal, start + 0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t);
+    const atk = attack || 0.005;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(amp, t + atk);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     o.connect(g); g.connect(dest);
-    o.start(start); o.stop(start + dur + 0.05);
-    return o;
+    o.start(t); o.stop(t + dur + 0.01);
   }
 
-  function noise(gainVal, dest, start, dur) {
-    const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+  function noiseHit(amp, dest, t, dur) {
+    const len = Math.ceil(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d   = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     const src = ctx.createBufferSource();
     src.buffer = buf;
     const g = ctx.createGain();
-    g.gain.setValueAtTime(gainVal, start);
-    g.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+    g.gain.setValueAtTime(amp, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(g); g.connect(dest);
-    src.start(start); src.stop(start + dur + 0.02);
+    src.start(t); src.stop(t + dur + 0.01);
   }
 
-  function lpf(freq) {
+  function makeCompressor(dest) {
+    const c = ctx.createDynamicsCompressor();
+    c.threshold.value = -14; c.ratio.value = 5; c.attack.value = 0.003; c.release.value = 0.15;
+    c.connect(dest);
+    return c;
+  }
+
+  function makeLPF(freq, dest) {
     const f = ctx.createBiquadFilter();
-    f.type = 'lowpass'; f.frequency.value = freq;
-    f.connect(sfxGain); return f;
+    f.type = 'lowpass'; f.frequency.value = freq; f.Q.value = 1.2;
+    f.connect(dest);
+    return f;
   }
 
-  function reverb(wet) {
-    // Simple convolution reverb via delay network
-    const d1 = ctx.createDelay(0.5); d1.delayTime.value = 0.13;
-    const d2 = ctx.createDelay(0.5); d2.delayTime.value = 0.21;
-    const fb1 = ctx.createGain(); fb1.gain.value = wet;
-    const fb2 = ctx.createGain(); fb2.gain.value = wet * 0.7;
-    d1.connect(fb1); fb1.connect(d1); d1.connect(sfxGain);
-    d2.connect(fb2); fb2.connect(d2); d2.connect(sfxGain);
-    return { in1: d1, in2: d2 };
+  function makeHPF(freq, dest) {
+    const f = ctx.createBiquadFilter();
+    f.type = 'highpass'; f.frequency.value = freq;
+    f.connect(dest);
+    return f;
   }
 
-  // ── MUSIC ────────────────────────────────────────────────────────────
-  // Inspired by "Disc Wars" / Daft Punk TRON Legacy OST
-  // Key: D minor  BPM: 140
-
-  const BPM    = 140;
-  const BEAT   = 60 / BPM;          // seconds per beat
-  const BAR    = BEAT * 4;
-
-  // Notes in Hz – D minor scale
-  const NOTE = {
-    D2: 73.4, A2: 110,  C3: 130.8, D3: 146.8, F3: 174.6,
-    G3: 196,  A3: 220,  C4: 261.6, D4: 293.7, F4: 349.2,
-    G4: 392,  A4: 440,  C5: 523.3, D5: 587.3,
-  };
-
-  // 8-step arpeggio pattern (indexes into arp notes)
-  const ARP_NOTES  = [NOTE.D3, NOTE.F3, NOTE.A3, NOTE.C4, NOTE.D4, NOTE.A3, NOTE.F3, NOTE.C4];
-  const BASS_NOTES = [NOTE.D2, NOTE.D2, NOTE.A2, NOTE.A2, NOTE.C3, NOTE.C3, NOTE.A2, NOTE.D2];
-
-  let musicScheduled = false;
-  let musicStartTime = 0;
-  let finalMode = false;
-
-  function scheduleBar(barIndex) {
-    const t0 = musicStartTime + barIndex * BAR;
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -18; comp.ratio.value = 6;
-    comp.connect(musicGain);
-
-    const rev = ctx.createConvolver();
-    // simple impulse
-    const irLen  = ctx.sampleRate * 1.5;
-    const irBuf  = ctx.createBuffer(2, irLen, ctx.sampleRate);
-    for (let ch = 0; ch < 2; ch++) {
-      const d = irBuf.getChannelData(ch);
-      for (let i = 0; i < irLen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / irLen, 2);
-    }
-    rev.buffer = irBuf;
-    const revGain = ctx.createGain(); revGain.gain.value = 0.18;
-    rev.connect(revGain); revGain.connect(musicGain);
-
-    // Bass line
-    for (let s = 0; s < 8; s++) {
-      const t = t0 + s * BEAT * 0.5;
-      osc('sawtooth', BASS_NOTES[s], 0.35, comp, t, BEAT * 0.48);
-      // sub
-      osc('sine', BASS_NOTES[s] * 0.5, 0.5, comp, t, BEAT * 0.48);
-    }
-
-    // Arpeggio (16th notes)
-    for (let s = 0; s < 16; s++) {
-      const t    = t0 + s * BEAT * 0.25;
-      const note = ARP_NOTES[s % 8];
-      osc('square', note, finalMode ? 0.14 : 0.10, rev, t, BEAT * 0.22);
-      osc('sawtooth', note * 2, finalMode ? 0.06 : 0.04, comp, t, BEAT * 0.10);
-    }
-
-    // Pad (whole note)
-    const chordFreqs = [NOTE.D3, NOTE.F3, NOTE.A3, NOTE.C4];
-    chordFreqs.forEach(f => {
-      osc('sine', f, 0.06, revGain, t0, BAR * 0.98);
-      osc('triangle', f * 1.005, 0.04, revGain, t0, BAR * 0.98);
+  // Plate-style reverb via feedback delay network
+  function makeReverb(wetGain) {
+    const times  = [0.031, 0.053, 0.077, 0.099];
+    const merger = ctx.createGain(); merger.gain.value = wetGain; merger.connect(musicBus);
+    times.forEach(t => {
+      const d = ctx.createDelay(0.5); d.delayTime.value = t;
+      const fb = ctx.createGain(); fb.gain.value = 0.38;
+      d.connect(fb); fb.connect(d); d.connect(merger);
+      merger._ins = merger._ins || [];
+      merger._ins.push(d);
     });
+    return merger;
+  }
 
-    // Kick
-    [0, 2].forEach(b => {
-      const t = t0 + b * BEAT;
-      const k = ctx.createOscillator();
+  // ── Musical constants ─────────────────────────────────────────────────
+  const BPM   = 128;
+  const BEAT  = 60 / BPM;
+  const BAR   = BEAT * 4;
+  const STEP  = BEAT / 4;   // 16th note
+
+  // A minor / A dorian — bright, driving, pop-friendly
+  const A2=110, E3=164.8, A3=220, B3=246.9, C4=261.6, D4=293.7,
+        E4=329.6, F4=349.2, G4=392, A4=440, B4=493.9, C5=523.3,
+        D5=587.3, E5=659.3;
+
+  // 16-step bass pattern (indexes into bassNotes, 0=rest)
+  const BASS_SEQ  = [A2, 0,A2,0,  E3,0,A2,0,  A2,0,D4/2,0,  E3,0,E3,A2];
+  // 16-step arp pattern
+  const ARP_SEQ   = [A3,0,E4,0, C4,0,E4,0, A3,0,D4,0, B3,E4,A4,0];
+  // lead melody (plays every 2 bars, 16 steps)
+  const LEAD_SEQ  = [E4,0,E4,D4, C4,0,A3,0, B3,0,B3,A3, G4,0,E4,0];
+
+  let rev = null;
+
+  function scheduleBar(t, bar) {
+    if (!rev) rev = makeReverb(0.22);
+    const comp  = makeCompressor(musicBus);
+    const bassLPF = makeLPF(isFinal ? 1800 : 1200, comp);
+    const arpLPF  = makeLPF(isFinal ? 7000 : 5000, rev._ins ? rev._ins[0] : musicBus);
+
+    const beatVol = isFinal ? 1.1 : 0.85;
+
+    // ── Kick (4-on-the-floor) ──────────────────────────────────────────
+    for (let b = 0; b < 4; b++) {
+      const kt = t + b * BEAT;
+      const ko = ctx.createOscillator();
       const kg = ctx.createGain();
-      k.frequency.setValueAtTime(150, t);
-      k.frequency.exponentialRampToValueAtTime(40, t + 0.12);
-      kg.gain.setValueAtTime(finalMode ? 1.2 : 0.9, t);
-      kg.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
-      k.connect(kg); kg.connect(comp);
-      k.start(t); k.stop(t + 0.3);
-    });
-
-    // Snare (beats 1 and 3 in half-bar)
-    [1, 3].forEach(b => {
-      const t = t0 + b * BEAT;
-      noise(finalMode ? 0.35 : 0.28, comp, t, 0.14);
-      osc('triangle', 220, 0.2, comp, t, 0.14);
-    });
-
-    // Hi-hats (8th notes)
-    for (let h = 0; h < 8; h++) {
-      noise(0.06, comp, t0 + h * BEAT * 0.5, 0.04);
+      ko.frequency.setValueAtTime(160, kt);
+      ko.frequency.exponentialRampToValueAtTime(40, kt + 0.1);
+      kg.gain.setValueAtTime(beatVol * 1.1, kt);
+      kg.gain.exponentialRampToValueAtTime(0.0001, kt + 0.35);
+      ko.connect(kg); kg.connect(comp);
+      ko.start(kt); ko.stop(kt + 0.4);
     }
 
-    // Open hat on off-beats
-    [1, 3, 5, 7].forEach(h => {
-      noise(0.09, comp, t0 + h * BEAT * 0.5, 0.09);
+    // ── Snare (2 + 4) ─────────────────────────────────────────────────
+    [1, 3].forEach(b => {
+      const st = t + b * BEAT;
+      noiseHit(beatVol * 0.35, comp, st, 0.12);
+      note('triangle', 200, beatVol * 0.25, comp, st, 0.1);
     });
-  }
 
-  function startMusicLoop() {
-    if (musicScheduled) return;
-    musicScheduled = true;
-    musicStartTime = ctx.currentTime + 0.1;
-    let bar = 0;
-    const LOOKAHEAD = 2; // bars
+    // ── Hi-hats ───────────────────────────────────────────────────────
+    for (let s = 0; s < 16; s++) {
+      const ht = t + s * STEP;
+      const isOpen = (s % 4 === 2);
+      noiseHit(isOpen ? 0.12 : 0.06, makeHPF(8000, comp), ht, isOpen ? 0.08 : 0.025);
+    }
 
-    function schedule() {
-      const now = ctx.currentTime;
-      while (musicStartTime + bar * BAR < now + LOOKAHEAD * BAR) {
-        scheduleBar(bar);
-        bar++;
+    // ── Clap (on 2+4, layered with snare) ────────────────────────────
+    [1, 3].forEach(b => {
+      const ct = t + b * BEAT + 0.008;
+      noiseHit(beatVol * 0.18, makeLPF(6000, comp), ct, 0.07);
+    });
+
+    // ── Synth bass ────────────────────────────────────────────────────
+    for (let s = 0; s < 16; s++) {
+      const freq = BASS_SEQ[s];
+      if (!freq) continue;
+      const bt = t + s * STEP;
+      // sawtooth + sub sine
+      note('sawtooth', freq,      0.38, bassLPF, bt, STEP * 0.75, 0.008);
+      note('sine',     freq * 0.5, 0.5, comp,    bt, STEP * 0.85, 0.005);
+    }
+
+    // ── Arp synth ─────────────────────────────────────────────────────
+    for (let s = 0; s < 16; s++) {
+      const freq = ARP_SEQ[s];
+      if (!freq) continue;
+      const at = t + s * STEP;
+      note('square', freq,  isFinal ? 0.12 : 0.08, arpLPF,  at, STEP * 0.6, 0.003);
+      note('sawtooth',freq, isFinal ? 0.06 : 0.04, arpLPF,  at, STEP * 0.4, 0.003);
+    }
+
+    // ── Lead melody (every 2 bars) ────────────────────────────────────
+    if (bar % 2 === 0) {
+      for (let s = 0; s < 16; s++) {
+        const freq = LEAD_SEQ[s];
+        if (!freq) continue;
+        const lt = t + s * STEP;
+        note('sawtooth', freq, isFinal ? 0.18 : 0.13, rev._ins ? rev._ins[1] : musicBus, lt, STEP * 0.85, 0.01);
       }
     }
+
+    // ── Chord stab (every 4 bars) ─────────────────────────────────────
+    if (bar % 4 === 0) {
+      const chord = [A3, C4, E4, G4];
+      const stab  = t + 3 * BEAT + 3 * STEP;
+      chord.forEach(f => {
+        note('sawtooth', f, 0.09, rev._ins ? rev._ins[2] : musicBus, stab, STEP * 0.5, 0.005);
+      });
+    }
+
+    // ── Side-chain pumping effect on pad ─────────────────────────────
+    const pad = ctx.createOscillator();
+    const padG = ctx.createGain();
+    pad.type = 'sine'; pad.frequency.value = A2;
+    padG.gain.setValueAtTime(0.04, t);
+    for (let b = 0; b < 4; b++) {
+      padG.gain.setValueAtTime(0, t + b * BEAT);
+      padG.gain.linearRampToValueAtTime(0.04, t + b * BEAT + BEAT * 0.4);
+    }
+    pad.connect(padG); padG.connect(musicBus);
+    pad.start(t); pad.stop(t + BAR);
+  }
+
+  // ── Scheduler ────────────────────────────────────────────────────────
+  function schedule() {
+    const LOOKAHEAD = 0.1;   // s ahead to schedule
+    const INTERVAL  = 50;    // ms between scheduler runs
+
+    if (!ctx) return;
+    while (nextBarTime < ctx.currentTime + LOOKAHEAD + BAR) {
+      scheduleBar(nextBarTime, barIndex);
+      nextBarTime += BAR;
+      barIndex++;
+    }
+  }
+
+  function startMusic() {
+    ensure();
+    if (schedulerTimer) return;
+    nextBarTime = ctx.currentTime + 0.05;
+    barIndex    = 0;
+    isFinal     = false;
     schedule();
-    const id = setInterval(schedule, 500);
-    musicNodes.push({ stop: () => clearInterval(id) });
+    schedulerTimer = setInterval(schedule, 50);
   }
 
   function stopMusic() {
-    musicNodes.forEach(n => n.stop && n.stop());
-    musicNodes = [];
-    musicScheduled = false;
-    finalMode = false;
+    clearInterval(schedulerTimer);
+    schedulerTimer = null;
+    barIndex = 0;
+    rev = null;
   }
 
-  function setFinalMode(on) {
-    finalMode = on;
-    if (on && musicGain) {
-      musicGain.gain.linearRampToValueAtTime(0.6, ctx.currentTime + 0.5);
+  function setFinal(on) {
+    isFinal = on;
+    if (on && musicBus) {
+      musicBus.gain.cancelScheduledValues(ctx.currentTime);
+      musicBus.gain.linearRampToValueAtTime(0.65, ctx.currentTime + 0.5);
     }
   }
 
-  // ── SFX ──────────────────────────────────────────────────────────────
-
-  function throwDisc() {
-    const f = lpf(4000);
-    const t = ctx.currentTime;
-    osc('sawtooth', 880, 0.3, f, t, 0.06);
-    osc('sine', 440, 0.4, f, t + 0.03, 0.15);
-    noise(0.1, f, t, 0.08);
-  }
-
-  function discBounce() {
-    const t = ctx.currentTime;
-    osc('sine', 660, 0.35, sfxGain, t, 0.07);
-    osc('square', 330, 0.15, sfxGain, t + 0.01, 0.05);
-  }
-
-  function discCatch() {
-    const t = ctx.currentTime;
-    osc('sine', 880, 0.3, sfxGain, t, 0.04);
-    osc('sine', 1100, 0.2, sfxGain, t + 0.03, 0.06);
-    osc('sine', 1320, 0.15, sfxGain, t + 0.06, 0.08);
-  }
-
-  function derezz() {
-    const t = ctx.currentTime;
-    const f = lpf(3000);
-    // descending crash
-    for (let i = 0; i < 8; i++) {
-      const tt = t + i * 0.045;
-      osc('sawtooth', 800 * Math.pow(0.75, i), 0.25, f, tt, 0.08);
-      noise(0.2, f, tt, 0.06);
+  // ── Crowd ─────────────────────────────────────────────────────────────
+  function crowdNoise(amp, dur) {
+    ensure();
+    const len = Math.ceil(ctx.sampleRate * dur);
+    const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch); let v = 0;
+      for (let i = 0; i < len; i++) { v = v * 0.997 + (Math.random() * 2 - 1) * 0.003; d[i] = v; }
     }
-    osc('sine', 120, 0.6, sfxGain, t + 0.1, 0.4);
-  }
-
-  function dodge() {
-    const t = ctx.currentTime;
-    osc('sine', 1200, 0.2, sfxGain, t, 0.04);
-    osc('sine', 900,  0.15, sfxGain, t + 0.03, 0.06);
-    noise(0.08, sfxGain, t, 0.05);
-  }
-
-  // ── CROWD ─────────────────────────────────────────────────────────────
-  // Synthesize "DISC WARS!" crowd chant using Web Speech API layered
-  // with generated crowd noise
-
-  function crowdNoise(duration, gainVal) {
-    const buf = ctx.createBuffer(1, ctx.sampleRate * duration, ctx.sampleRate);
-    const d = buf.getChannelData(0);
-    let state = 0;
-    for (let i = 0; i < d.length; i++) {
-      state = state * 0.998 + (Math.random() * 2 - 1) * 0.002;
-      d[i] = state;
-    }
-    const src = ctx.createBufferSource();
-    src.buffer = buf;
-    const bpf = ctx.createBiquadFilter();
-    bpf.type = 'bandpass'; bpf.frequency.value = 800; bpf.Q.value = 0.5;
-    const g = ctx.createGain(); g.gain.value = gainVal;
-    src.connect(bpf); bpf.connect(g); g.connect(sfxGain);
-    src.start(); src.stop(ctx.currentTime + duration);
+    const src = ctx.createBufferSource(); src.buffer = buf;
+    const bpf = ctx.createBiquadFilter(); bpf.type='bandpass'; bpf.frequency.value=900; bpf.Q.value=0.8;
+    const g   = ctx.createGain(); g.gain.value = amp;
+    src.connect(bpf); bpf.connect(g); g.connect(sfxBus);
+    src.start(); src.stop(ctx.currentTime + dur);
   }
 
   function crowdChant() {
-    // Layer crowd background noise
-    crowdNoise(4, 0.3);
-
-    // Synthesized crowd voice using oscillators (vowel formants)
-    // "DISC" — short burst — then "WARS" — longer
+    ensure();
+    crowdNoise(0.28, 3.5);
     const t = ctx.currentTime;
-    // "DISC" formants: ~800Hz F1, ~1200Hz F2
-    [800, 1200, 2400].forEach((f, i) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'sawtooth'; o.frequency.value = f * (0.95 + Math.random() * 0.1);
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.07 - i * 0.015, t + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
-      o.connect(g); g.connect(sfxGain);
-      o.start(t); o.stop(t + 0.4);
+    // synthesized crowd-voice vowel formants for "DISC"
+    [[820,0.07],[1200,0.04],[2500,0.02]].forEach(([f,a])=>{
+      const o=ctx.createOscillator(), g=ctx.createGain();
+      o.type='sawtooth'; o.frequency.value=f*(0.97+Math.random()*0.06);
+      g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(a,t+0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001,t+0.32);
+      o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t+0.35);
     });
-    // "WARS" formants: ~600Hz F1, ~1000Hz F2, longer
-    const t2 = t + 0.45;
-    [600, 1000, 2000].forEach((f, i) => {
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.type = 'sawtooth'; o.frequency.value = f * (0.95 + Math.random() * 0.1);
-      g.gain.setValueAtTime(0, t2);
-      g.gain.linearRampToValueAtTime(0.10 - i * 0.02, t2 + 0.06);
-      g.gain.setValueAtTime(0.10 - i * 0.02, t2 + 0.35);
-      g.gain.exponentialRampToValueAtTime(0.0001, t2 + 0.7);
-      o.connect(g); g.connect(sfxGain);
-      o.start(t2); o.stop(t2 + 0.8);
+    // "WARS"
+    const t2=t+0.42;
+    [[600,0.09],[1000,0.055],[2000,0.025]].forEach(([f,a])=>{
+      const o=ctx.createOscillator(), g=ctx.createGain();
+      o.type='sawtooth'; o.frequency.value=f*(0.97+Math.random()*0.06);
+      g.gain.setValueAtTime(0,t2); g.gain.linearRampToValueAtTime(a,t2+0.06);
+      g.gain.setValueAtTime(a,t2+0.38); g.gain.exponentialRampToValueAtTime(0.0001,t2+0.75);
+      o.connect(g); g.connect(sfxBus); o.start(t2); o.stop(t2+0.8);
     });
-    // "!" — crowd up-swell
-    const t3 = t2 + 0.7;
-    crowdNoise(0.5, 0.5);
-
-    // Also use speech synthesis for clarity (layered quietly)
+    // "!"  swell
+    crowdNoise(0.45, 0.5);
     if (window.speechSynthesis) {
-      const utter = new SpeechSynthesisUtterance('DISC WARS!');
-      utter.rate   = 0.9;
-      utter.pitch  = 0.8;
-      utter.volume = 0.25;
-      window.speechSynthesis.speak(utter);
+      const u=new SpeechSynthesisUtterance('DISC WARS!');
+      u.rate=0.85; u.pitch=0.75; u.volume=0.22; speechSynthesis.speak(u);
     }
   }
 
   function crowdExcited() {
-    crowdNoise(2.5, 0.55);
-    // Rising cheer
-    const t = ctx.currentTime;
-    for (let i = 0; i < 12; i++) {
-      const tt   = t + i * 0.07;
-      const freq = 300 + i * 40 + Math.random() * 60;
-      osc('sawtooth', freq, 0.06, sfxGain, tt, 0.2);
+    ensure();
+    crowdNoise(0.55, 2.5);
+    const t=ctx.currentTime;
+    for(let i=0;i<14;i++){
+      const tt=t+i*0.06, f=280+i*45+Math.random()*50;
+      note('sawtooth',f,0.055,sfxBus,tt,0.18);
     }
-    // Whistles
-    for (let i = 0; i < 5; i++) {
-      const tt = t + Math.random() * 0.5;
-      osc('sine', 2400 + Math.random() * 400, 0.12, sfxGain, tt, 0.3 + Math.random() * 0.3);
+    for(let i=0;i<4;i++){
+      const tt=t+Math.random()*0.5;
+      note('sine',2300+Math.random()*500,0.13,sfxBus,tt,0.3+Math.random()*0.3);
     }
-    if (window.speechSynthesis) {
-      const r = ['YEAH!', 'DEREZ!', 'WHOA!', 'HE\'S DOWN!', 'FINISH HIM!'];
-      const utter = new SpeechSynthesisUtterance(r[Math.floor(Math.random() * r.length)]);
-      utter.rate = 1.1; utter.pitch = 1.2; utter.volume = 0.3;
-      window.speechSynthesis.speak(utter);
+    if(window.speechSynthesis){
+      const lines=['YEAH!','DEREZ!','WHOA!','HE\'S DOWN!','END OF LINE!'];
+      const u=new SpeechSynthesisUtterance(lines[Math.floor(Math.random()*lines.length)]);
+      u.rate=1.1; u.pitch=1.2; u.volume=0.28; speechSynthesis.speak(u);
     }
   }
 
-  function crowdTense() {
-    crowdNoise(1, 0.15);
-  }
-
-  // Periodic crowd chants during gameplay
-  let chantInterval = null;
   function startChanting() {
-    if (chantInterval) return;
+    ensure();
     crowdChant();
-    chantInterval = setInterval(() => {
-      if (Math.random() < 0.4) crowdChant();
-      else crowdTense();
-    }, 6000 + Math.random() * 4000);
+    chantTimer = setInterval(()=>{
+      if(Math.random()<0.45) crowdChant(); else crowdNoise(0.1,1);
+    }, 7000+Math.random()*4000);
   }
-  function stopChanting() {
-    clearInterval(chantInterval);
-    chantInterval = null;
+  function stopChanting() { clearInterval(chantTimer); chantTimer=null; }
+
+  // ── SFX ──────────────────────────────────────────────────────────────
+  function throwDisc() {
+    ensure();
+    const t=ctx.currentTime;
+    note('sawtooth',900,0.28,sfxBus,t,0.06);
+    note('sine',    450,0.38,sfxBus,t+0.03,0.14);
+    noiseHit(0.1,sfxBus,t,0.07);
   }
 
-  // ── Public API ────────────────────────────────────────────────────────
+  function discCatch() {
+    ensure();
+    const t=ctx.currentTime;
+    note('sine',1000,0.28,sfxBus,t,0.04);
+    note('sine',1260,0.20,sfxBus,t+0.03,0.05);
+    note('sine',1580,0.14,sfxBus,t+0.06,0.07);
+  }
+
+  function derezz() {
+    ensure();
+    const t=ctx.currentTime;
+    for(let i=0;i<10;i++){
+      const tt=t+i*0.04;
+      note('sawtooth',900*Math.pow(0.72,i),0.22,sfxBus,tt,0.07);
+      noiseHit(0.18,sfxBus,tt,0.05);
+    }
+    note('sine',100,0.55,sfxBus,t+0.08,0.5);
+  }
+
+  function dodgeSfx() {
+    ensure();
+    const t=ctx.currentTime;
+    note('sine',1400,0.18,sfxBus,t,0.04);
+    note('sine',1000,0.13,sfxBus,t+0.03,0.05);
+    noiseHit(0.07,sfxBus,t,0.04);
+  }
+
+  // ── public API ────────────────────────────────────────────────────────
   return {
-    init() { ensure(); },
-    startMusic() { ensure(); startMusicLoop(); },
-    stopMusic()  { stopMusic(); },
-    finalMode(on) { ensure(); setFinalMode(on); },
-    startChanting() { ensure(); startChanting(); },
-    stopChanting()  { stopChanting(); },
-    crowdChant()    { ensure(); crowdChant(); },
-    crowdExcited()  { ensure(); crowdExcited(); },
-    throwDisc()     { ensure(); throwDisc(); },
-    discBounce()    { ensure(); discBounce(); },
-    discCatch()     { ensure(); discCatch(); },
-    derezz()        { ensure(); derezz(); },
-    dodge()         { ensure(); dodge(); },
+    init()           { ensure(); },
+    startMusic()     { ensure(); startMusic(); },
+    stopMusic()      { stopMusic(); },
+    finalMode(on)    { ensure(); setFinal(on); },
+    startChanting()  { ensure(); startChanting(); },
+    stopChanting()   { stopChanting(); },
+    crowdChant()     { crowdChant(); },
+    crowdExcited()   { crowdExcited(); },
+    throwDisc()      { throwDisc(); },
+    discCatch()      { discCatch(); },
+    discBounce()     {},
+    derezz()         { derezz(); },
+    dodge()          { dodgeSfx(); },
   };
 })();
