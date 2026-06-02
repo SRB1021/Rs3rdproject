@@ -11,9 +11,45 @@ let players    = {};
 let bodies     = [];
 let keys       = {};
 let mouseWorld = { x: 0, y: 0 };
+let localTileMap = null;
+let discRotAngle = 0;
 
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
+
+// ── hex math (client mirror) ───────────────────────────────────────────
+const sqrt3 = Math.sqrt(3);
+const HEX_SIZE = 26;
+
+function hexToWorld(q, r, size) {
+  return { x: size*(sqrt3*q + sqrt3/2*r), y: size*(3/2*r) };
+}
+function worldToHexFrac(x, y, size) {
+  return { q:(sqrt3/3*x - 1/3*y)/size, r:(2/3*y)/size };
+}
+function hexRound(fq, fr) {
+  const fs=-fq-fr;
+  let rq=Math.round(fq),rr=Math.round(fr),rs=Math.round(fs);
+  const dq=Math.abs(rq-fq),dr=Math.abs(rr-fr),ds=Math.abs(rs-fs);
+  if(dq>dr&&dq>ds) rq=-rr-rs;
+  else if(dr>ds) rr=-rq-rs;
+  return {q:rq,r:rr};
+}
+function buildLocalTileMap(a) {
+  const cx=a.width/2, cy=a.height/2;
+  const R=Math.min(a.width,a.height)*0.44;
+  const size=HEX_SIZE;
+  const tiles={};
+  const range=Math.ceil(R/size)+2;
+  for(let q=-range;q<=range;q++){
+    for(let r=-range;r<=range;r++){
+      const {x:lx,y:ly}=hexToWorld(q,r,size);
+      const d=Math.sqrt(lx*lx+ly*ly);
+      if(d+size*0.6<=R) tiles[`${q},${r}`]={q,r,x:cx+lx,y:cy+ly,state:0};
+    }
+  }
+  return {tiles,cx,cy,R,size};
+}
 
 // ── screens ────────────────────────────────────────────────────────────
 function showTitle()  { document.getElementById('titleScreen').style.display='flex'; document.getElementById('arenaWrap').style.display='none'; }
@@ -33,9 +69,21 @@ window.addEventListener('keydown', e => {
     socket.emit('dodge');
     Audio.dodge();
   }
+  if (e.key === 'Shift') {
+    if (gameState === 'playing' || gameState === 'finalBattle') {
+      socket.emit('blockStart');
+    }
+  }
   sendInput();
 });
-window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; sendInput(); });
+window.addEventListener('keyup', e => {
+  const k = e.key.toLowerCase();
+  keys[k] = false;
+  if (e.key === 'Shift') {
+    socket.emit('blockEnd');
+  }
+  sendInput();
+});
 
 canvas.addEventListener('mousemove', e => {
   const r = canvas.getBoundingClientRect();
@@ -102,6 +150,7 @@ document.getElementById('playAgainBtn').addEventListener('click', () => {
 function doLeave() {
   socket.emit('leaveRoom');
   myRoomCode=null; hostId=null; players={}; bodies=[];
+  localTileMap=null;
   document.getElementById('gameOverScreen').style.display='none';
   gameState='title'; showTitle();
 }
@@ -151,6 +200,7 @@ socket.on('hostChanged', ({ hostId:h })=> { hostId=h; updateLobbyOverlay(); });
 // ── socket: game events ────────────────────────────────────────────────
 socket.on('gameStart', ({ arena: a }) => {
   arena=a; gameState='playing';
+  localTileMap = buildLocalTileMap(a);
   document.getElementById('gameOverScreen').style.display='none';
   setLobbyMode(false); resizeCanvas();
   Audio.startMusic(); Audio.startChanting();
@@ -158,20 +208,30 @@ socket.on('gameStart', ({ arena: a }) => {
 
 socket.on('finalBattle', ({ arena: a }) => {
   arena=a; gameState='finalBattle';
+  localTileMap = buildLocalTileMap(a);
   resizeCanvas(); showFinalBanner();
   Audio.finalMode(true); Audio.crowdExcited();
 });
 
-socket.on('gameState', ({ players: ps, bodies: b, arena: a, state }) => {
+socket.on('gameState', ({ players: ps, bodies: b, arena: a, state, changedTiles }) => {
   arena=a; bodies=b||[];
   ps.forEach(p => { if(players[p.id]) Object.assign(players[p.id],p); else players[p.id]=p; });
+  // update local tile states
+  if (localTileMap && changedTiles) {
+    for (const ct of changedTiles) {
+      if (localTileMap.tiles[ct.id]) localTileMap.tiles[ct.id].state = ct.state;
+    }
+    // reset tiles not in changedTiles back to 0 (server only sends non-intact)
+    // We only update state changes from server, no reset needed since server streams all non-intact
+  }
   if (gameState==='playing'||gameState==='finalBattle') updateHUD();
 });
 
 socket.on('playerEliminated', ({ id, killerName }) => {
   Audio.derezz(); Audio.crowdExcited();
   if (players[id]) { players[id]._derezzTime=Date.now(); players[id].alive=false; }
-  addKillFeed(killerName, players[id]?.name||'???');
+  const victimName = players[id]?.name||'???';
+  addKillFeed(killerName||'VOID', victimName);
 });
 
 socket.on('discCaught', ({ playerId }) => { if(playerId===myId) Audio.discCatch(); });
@@ -179,7 +239,6 @@ socket.on('discCaught', ({ playerId }) => { if(playerId===myId) Audio.discCatch(
 socket.on('gameOver', ({ winnerId, winnerName }) => {
   gameState='gameOver';
   Audio.stopMusic(); Audio.stopChanting();
-  // switch back to lobby overlay so players can move around
   setLobbyMode(true); updateLobbyOverlay();
   showGameOver(winnerName, winnerId===myId);
 });
@@ -221,8 +280,11 @@ function updateHUD() {
     const el=document.createElement('div');
     el.className='hud-player'+(p.alive?'':' hud-dead');
     el.style.color=p.color; el.style.borderColor=p.color;
+    let status = p.alive
+      ? (p.hasDisc ? '◈ DISC READY' : (p.dodging ? '⚡ DODGING' : (p.blocking ? '🛡 BLOCKING' : '◌ disc away')))
+      : '✕ DEREZZED';
     el.innerHTML=`<span class="hud-name">${p.name}${p.id===myId?' ◀':''}${p.isBot?' 🤖':''}</span>
-                  <span class="hud-disc">${p.alive?(p.hasDisc?'◈ DISC READY':(p.dodging?'⚡ DODGING':'◌ disc away')):'✕ DEREZZED'}</span>`;
+                  <span class="hud-disc">${status}</span>`;
     hud.appendChild(el);
   });
   const alive=Object.values(players).filter(p=>p.alive).length;
@@ -231,42 +293,114 @@ function updateHUD() {
     : `${alive} PROGRAM${alive!==1?'S':''} REMAIN`;
 }
 
-// ── render ─────────────────────────────────────────────────────────────
-const WALL=24, P_R=18, D_R=11;
+// ── render helpers ─────────────────────────────────────────────────────
+const P_R=18, D_R=11;
 
 function glow(color,blur){ ctx.shadowColor=color; ctx.shadowBlur=blur; }
 function noGlow()         { ctx.shadowBlur=0; }
 
+// ── draw hex tiles ─────────────────────────────────────────────────────
+function hexCorners(cx, cy, size) {
+  const pts = [];
+  for (let i=0;i<6;i++) {
+    const angle = Math.PI/180*(60*i - 30); // pointy-top
+    pts.push({x: cx+size*Math.cos(angle), y: cy+size*Math.sin(angle)});
+  }
+  return pts;
+}
+
+function drawHexTile(t, now) {
+  const pts = hexCorners(t.x, t.y, HEX_SIZE-1);
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for(let i=1;i<6;i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+
+  if (t.state === 0) {
+    ctx.fillStyle = 'rgba(0,15,30,0.85)';
+    ctx.fill();
+    glow('#00f7ff', 4);
+    ctx.strokeStyle = 'rgba(0,200,255,0.35)';
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    noGlow();
+  } else if (t.state === 1) {
+    // cracking — flash orange
+    const flash = 0.5+0.5*Math.sin(now*0.02);
+    ctx.fillStyle = `rgba(${Math.floor(180+75*flash)},${Math.floor(60+30*flash)},0,0.9)`;
+    ctx.fill();
+    glow('#ff8800', 12);
+    ctx.strokeStyle = '#ffaa00';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    noGlow();
+  } else if (t.state === 2) {
+    // destroyed — void
+    ctx.fillStyle = 'rgba(0,0,0,0.97)';
+    ctx.fill();
+    glow('#001040', 8);
+    ctx.strokeStyle = 'rgba(30,0,80,0.5)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    noGlow();
+  }
+}
+
+function drawHexTiles() {
+  if (!localTileMap) return;
+  const now = Date.now();
+  for (const t of Object.values(localTileMap.tiles)) {
+    drawHexTile(t, now);
+  }
+}
+
+// ── draw arena ─────────────────────────────────────────────────────────
 function drawArena() {
-  ctx.fillStyle='#020b14'; ctx.fillRect(0,0,arena.width,arena.height);
+  // black void outside circle
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,arena.width,arena.height);
 
-  // grid
-  ctx.strokeStyle='#0a2030'; ctx.lineWidth=1;
-  for(let x=WALL;x<=arena.width-WALL;x+=40){ ctx.beginPath(); ctx.moveTo(x,WALL); ctx.lineTo(x,arena.height-WALL); ctx.stroke(); }
-  for(let y=WALL;y<=arena.height-WALL;y+=40){ ctx.beginPath(); ctx.moveTo(WALL,y); ctx.lineTo(arena.width-WALL,y); ctx.stroke(); }
+  const tm = localTileMap;
+  if (!tm) {
+    // fallback if no tilemap yet
+    ctx.fillStyle='#020b14';
+    ctx.beginPath(); ctx.arc(arena.width/2,arena.height/2,Math.min(arena.width,arena.height)*0.44,0,Math.PI*2); ctx.fill();
+    return;
+  }
 
-  // wall
+  // clip to circle for floor
+  ctx.save();
+  ctx.beginPath(); ctx.arc(tm.cx, tm.cy, tm.R, 0, Math.PI*2); ctx.clip();
+
+  // draw hex tile floor
+  drawHexTiles();
+
+  ctx.restore();
+
+  // outer ring wall
   const wc = gameState==='finalBattle'?'#ff6600':'#00f7ff';
-  ctx.strokeStyle=wc; ctx.lineWidth=3; glow(wc,18);
-  ctx.strokeRect(WALL,WALL,arena.width-WALL*2,arena.height-WALL*2);
-  [[WALL,WALL],[arena.width-WALL,WALL],[WALL,arena.height-WALL],[arena.width-WALL,arena.height-WALL]].forEach(([cx,cy])=>{
-    ctx.beginPath(); ctx.arc(cx,cy,5,0,Math.PI*2); ctx.fillStyle=wc; glow(wc,20); ctx.fill();
-  });
+  ctx.strokeStyle=wc; ctx.lineWidth=4;
+  glow(wc, 24);
+  ctx.beginPath(); ctx.arc(tm.cx, tm.cy, tm.R, 0, Math.PI*2); ctx.stroke();
   noGlow();
 
-  // lobby "WAITING" pulse
+  // secondary inner ring
+  ctx.strokeStyle = gameState==='finalBattle'?'rgba(255,102,0,0.3)':'rgba(0,200,255,0.2)';
+  ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.arc(tm.cx, tm.cy, tm.R-6, 0, Math.PI*2); ctx.stroke();
+
+  // lobby text
   if (gameState==='lobby') {
-    ctx.fillStyle='rgba(0,247,255,0.04)';
-    ctx.font='bold 22px "Courier New"'; ctx.textAlign='center';
+    ctx.fillStyle='rgba(0,247,255,0.07)';
+    ctx.font='bold 20px "Courier New"'; ctx.textAlign='center';
     ctx.fillText('MOVE FREELY — GAME STARTS SOON', arena.width/2, arena.height/2);
   }
 
   // room code watermark
   ctx.fillStyle='rgba(0,247,255,0.06)'; ctx.font='13px "Courier New"'; ctx.textAlign='right';
-  ctx.fillText(myRoomCode||'', arena.width-WALL-6, arena.height-WALL-6);
+  ctx.fillText(myRoomCode||'', arena.width-30, arena.height-14);
 }
 
-// Scatter fragment positions per body (stable per body)
+// ── draw bodies ─────────────────────────────────────────────────────────
 const bodyFragCache = {};
 function getFrags(body) {
   if (!bodyFragCache[body.id]) {
@@ -293,7 +427,6 @@ function drawBodies() {
       ctx.fillRect(-f.size/2, -f.size/2, f.size, f.size);
       ctx.restore();
     });
-    // name tag over body
     ctx.globalAlpha=0.3; ctx.fillStyle=body.color;
     ctx.font='9px "Courier New"'; ctx.textAlign='center';
     glow(body.color,4);
@@ -303,72 +436,152 @@ function drawBodies() {
   ctx.globalAlpha=1; noGlow();
 }
 
+// ── draw player (circuit suit) ─────────────────────────────────────────
 function drawPlayer(p) {
   if (!p.alive) return;
-  const {x,y,color:c}=p;
+  const {x,y}=p;
+  const c=p.color;
+  const isFalling = p.fallTimer && p.fallTimer > 0;
+  const flashRed = isFalling && Math.floor(Date.now()/80)%2===0;
+  const drawColor = flashRed ? '#ff0000' : c;
 
+  // dodge aura
   if (p.dodging) {
-    glow(c,40); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.setLineDash([4,4]);
+    glow(drawColor,40); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.setLineDash([4,4]);
     ctx.beginPath(); ctx.arc(x,y,P_R+8,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]);
+    noGlow();
   }
 
-  glow(c,22); ctx.fillStyle=c; ctx.beginPath(); ctx.arc(x,y,P_R,0,Math.PI*2); ctx.fill();
-  noGlow(); ctx.fillStyle='#020b14'; ctx.beginPath(); ctx.arc(x,y,P_R*0.55,0,Math.PI*2); ctx.fill();
+  // main body circle
+  glow(drawColor,28);
+  ctx.fillStyle=drawColor;
+  ctx.beginPath(); ctx.arc(x,y,P_R,0,Math.PI*2); ctx.fill();
+  noGlow();
 
-  // facing dot
-  glow(c,10); ctx.strokeStyle=c; ctx.lineWidth=2;
+  // inner dark (helmet)
+  ctx.fillStyle='#010a10';
+  ctx.beginPath(); ctx.arc(x,y,P_R*0.52,0,Math.PI*2); ctx.fill();
+
+  // circuit lines on body
+  ctx.strokeStyle=drawColor; ctx.lineWidth=1.5;
+  glow(drawColor,8);
+  // horizontal bars
+  ctx.beginPath(); ctx.moveTo(x-P_R*0.7, y-P_R*0.25); ctx.lineTo(x+P_R*0.7, y-P_R*0.25); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x-P_R*0.7, y+P_R*0.25); ctx.lineTo(x+P_R*0.7, y+P_R*0.25); ctx.stroke();
+  // spine
+  ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(x, y-P_R*0.6); ctx.lineTo(x, y+P_R*0.6); ctx.stroke();
+  // shoulder squares
+  ctx.fillStyle=drawColor;
+  ctx.fillRect(x-P_R*0.7-3, y-P_R*0.45, 5, 5);
+  ctx.fillRect(x+P_R*0.7-2, y-P_R*0.45, 5, 5);
+  noGlow();
+
+  // facing indicator line
+  glow(drawColor,12);
+  ctx.strokeStyle=drawColor; ctx.lineWidth=2.5;
   ctx.beginPath();
   ctx.moveTo(x+p.facing.x*P_R*0.55, y+p.facing.y*P_R*0.55);
-  ctx.lineTo(x+p.facing.x*(P_R+6),  y+p.facing.y*(P_R+6));
-  ctx.stroke(); noGlow();
+  ctx.lineTo(x+p.facing.x*(P_R+7),  y+p.facing.y*(P_R+7));
+  ctx.stroke();
+  noGlow();
 
-  // "you" ring
-  if (p.id===myId) {
-    ctx.strokeStyle='#fff'; ctx.lineWidth=1; ctx.globalAlpha=0.4;
-    ctx.beginPath(); ctx.arc(x,y,P_R+5,0,Math.PI*2); ctx.stroke(); ctx.globalAlpha=1;
+  // blocking shield (large ring in front)
+  if (p.blocking) {
+    const sx=x+p.facing.x*P_R*1.2, sy=y+p.facing.y*P_R*1.2;
+    glow(drawColor,30);
+    ctx.strokeStyle=drawColor; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.arc(sx,sy,P_R*1.1,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(sx,sy,P_R*0.75,0,Math.PI*2); ctx.stroke();
+    noGlow();
   }
 
-  // bot icon
+  // "you" ring pulse
+  if (p.id===myId) {
+    const pulse=0.4+0.25*Math.sin(Date.now()*0.005);
+    ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.globalAlpha=pulse;
+    ctx.beginPath(); ctx.arc(x,y,P_R+7,0,Math.PI*2); ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+
+  // name label
   const label = p.isBot ? '🤖 '+p.name : p.name;
-  ctx.fillStyle=c; ctx.font='10px "Courier New"'; ctx.textAlign='center';
-  glow(c,6); ctx.fillText(label,x,y-P_R-6); noGlow();
+  ctx.fillStyle=drawColor; ctx.font='10px "Courier New"'; ctx.textAlign='center';
+  glow(drawColor,6); ctx.fillText(label,x,y-P_R-8); noGlow();
 }
 
+// ── draw disc ─────────────────────────────────────────────────────────
 function drawDisc(disc) {
   if(!disc) return;
   const{x,y,ownerColor,returning,vx,vy}=disc;
-  const speed=Math.sqrt(vx*vx+vy*vy)||1, nx=vx/speed, ny=vy/speed;
-  glow(ownerColor,returning?10:20);
+  const speed=Math.sqrt(vx*vx+vy*vy)||1;
+  const nx=vx/speed, ny=vy/speed;
+  const col=returning?'#ffffff':ownerColor;
+
+  // motion trail
   for(let i=1;i<=5;i++){
-    ctx.globalAlpha=0.25-i*0.04; ctx.fillStyle=ownerColor;
+    ctx.globalAlpha=0.22-i*0.04; ctx.fillStyle=ownerColor;
+    glow(ownerColor, 4);
     ctx.beginPath(); ctx.arc(x-nx*i*5,y-ny*i*5,D_R*(1-i*0.12),0,Math.PI*2); ctx.fill();
   }
-  ctx.globalAlpha=1;
-  const col=returning?'#fff':ownerColor;
-  glow(col,returning?30:22); ctx.fillStyle=col; ctx.beginPath(); ctx.arc(x,y,D_R,0,Math.PI*2); ctx.fill();
-  noGlow(); ctx.fillStyle='#020b14'; ctx.beginPath(); ctx.arc(x,y,D_R*0.38,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle=col; ctx.lineWidth=1.5; glow(col,8); ctx.globalAlpha=0.7;
-  ctx.beginPath(); ctx.arc(x,y,D_R*0.72,0,Math.PI*2); ctx.stroke();
   ctx.globalAlpha=1; noGlow();
+
+  // outer glowing ring
+  glow(col, returning?35:22);
+  ctx.strokeStyle=col; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(x,y,D_R,0,Math.PI*2); ctx.stroke();
+
+  // inner ring (rotates)
+  ctx.strokeStyle=returning?'rgba(255,255,255,0.6)':ownerColor;
+  ctx.lineWidth=1.5;
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(discRotAngle);
+  ctx.beginPath(); ctx.arc(0,0,D_R*0.65,0,Math.PI*2); ctx.stroke();
+  // tick marks
+  for(let i=0;i<4;i++){
+    const a=i*Math.PI/2;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a)*D_R*0.48, Math.sin(a)*D_R*0.48);
+    ctx.lineTo(Math.cos(a)*D_R*0.65, Math.sin(a)*D_R*0.65);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // dark center
+  noGlow();
+  ctx.fillStyle='#000810';
+  ctx.beginPath(); ctx.arc(x,y,D_R*0.38,0,Math.PI*2); ctx.fill();
+  noGlow();
 }
 
+// ── draw derezz ─────────────────────────────────────────────────────────
 function drawDerezz(p) {
   if(p.alive||!p._derezzTime) return;
   const elapsed=(Date.now()-p._derezzTime)/1000;
-  if(elapsed>1.5) return;
-  ctx.globalAlpha=Math.max(0,1-elapsed*0.7);
-  for(let i=0;i<8;i++){
-    const angle=(i/8)*Math.PI*2+elapsed*2, dist=elapsed*70+10, size=Math.max(1,7-elapsed*4);
-    glow(p.color,10); ctx.fillStyle=p.color;
-    ctx.fillRect(p.x+Math.cos(angle)*dist-size/2, p.y+Math.sin(angle)*dist-size/2, size, size);
+  if(elapsed>2.0) return;
+  ctx.globalAlpha=Math.max(0,1-elapsed*0.55);
+  for(let i=0;i<12;i++){
+    const angle=(i/12)*Math.PI*2+elapsed*1.5, d=elapsed*90+10, size=Math.max(1,8-elapsed*4);
+    glow(p.color,12); ctx.fillStyle=p.color;
+    ctx.save();
+    ctx.translate(p.x+Math.cos(angle)*d, p.y+Math.sin(angle)*d);
+    ctx.rotate(elapsed*3+i);
+    ctx.fillRect(-size/2,-size/2,size,size);
+    ctx.restore();
   }
   ctx.globalAlpha=1; noGlow();
 }
 
+// ── render ─────────────────────────────────────────────────────────────
 function render() {
+  discRotAngle += 0.052; // ~3 deg per frame at 60fps
+
   ctx.clearRect(0,0,canvas.width,canvas.height);
   drawArena();
   drawBodies();
+
   const all=Object.values(players);
   all.forEach(p=>{ if(p.disc) drawDisc(p.disc); });
   all.forEach(p=>{ drawDerezz(p); drawPlayer(p); });

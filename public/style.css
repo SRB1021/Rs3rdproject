@@ -156,6 +156,7 @@ input:focus { box-shadow: 0 0 8px var(--cyan); }
 .controls-guide {
   display: flex; gap: 20px;
   font-size: .75rem; letter-spacing: .06em; opacity: .6;
+  flex-wrap: wrap; justify-content: center;
 }
 .ctrl-row { display: flex; align-items: center; gap: 8px; }
 .key {
