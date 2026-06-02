@@ -13,6 +13,8 @@ let keys       = {};
 let mouseWorld = { x: 0, y: 0 };
 let localTileMap = null;
 let discRotAngle = 0;
+let gravity = { x: 0, y: 0 };
+let gravityAnnounceTick = 0;
 
 const canvas = document.getElementById('gameCanvas');
 const ctx    = canvas.getContext('2d');
@@ -213,18 +215,23 @@ socket.on('finalBattle', ({ arena: a }) => {
   Audio.finalMode(true); Audio.crowdExcited();
 });
 
-socket.on('gameState', ({ players: ps, bodies: b, arena: a, state, changedTiles }) => {
+socket.on('gameState', ({ players: ps, bodies: b, arena: a, state, changedTiles, gravity: g }) => {
   arena=a; bodies=b||[];
+  if (g) gravity=g;
   ps.forEach(p => { if(players[p.id]) Object.assign(players[p.id],p); else players[p.id]=p; });
-  // update local tile states
   if (localTileMap && changedTiles) {
     for (const ct of changedTiles) {
       if (localTileMap.tiles[ct.id]) localTileMap.tiles[ct.id].state = ct.state;
     }
-    // reset tiles not in changedTiles back to 0 (server only sends non-intact)
-    // We only update state changes from server, no reset needed since server streams all non-intact
   }
   if (gameState==='playing'||gameState==='finalBattle') updateHUD();
+});
+
+socket.on('gravityShift', ({ angle, strength }) => {
+  gravity.x = Math.cos(angle) * strength;
+  gravity.y = Math.sin(angle) * strength;
+  gravityAnnounceTick = Date.now();
+  Audio.derezz && Audio.dodge && Audio.dodge();
 });
 
 socket.on('playerEliminated', ({ id, killerName }) => {
@@ -436,79 +443,153 @@ function drawBodies() {
   ctx.globalAlpha=1; noGlow();
 }
 
-// ── draw player (circuit suit) ─────────────────────────────────────────
+// ── draw full TRON program body ────────────────────────────────────────
+function drawProgram(ctx2, dc, hasDisc, isBlocking, isDodging, isMe, walkPhase) {
+  const S = '#010c18'; // suit base dark
+
+  // ── BOOTS ───────────────────────────────────────────────────────────
+  ctx2.fillStyle = S;
+  ctx2.fillRect(-8, 20+walkPhase, 7, 6);   // left boot
+  ctx2.fillRect(1,  20-walkPhase, 7, 6);   // right boot
+  ctx2.fillStyle = dc; ctx2.globalAlpha=0.55;
+  ctx2.fillRect(-7, 20+walkPhase, 5, 2);
+  ctx2.fillRect(2,  20-walkPhase, 5, 2);
+  ctx2.globalAlpha=1;
+
+  // ── LEGS ────────────────────────────────────────────────────────────
+  ctx2.fillStyle = S;
+  ctx2.fillRect(-7, 7+walkPhase,  5, 14);  // left
+  ctx2.fillRect(2,  7-walkPhase,  5, 14);  // right
+  glow(dc, 6);
+  ctx2.fillStyle=dc; ctx2.globalAlpha=0.75;
+  ctx2.fillRect(-6, 11+walkPhase, 3, 2);
+  ctx2.fillRect(-6, 16+walkPhase, 3, 2);
+  ctx2.fillRect(3,  11-walkPhase, 3, 2);
+  ctx2.fillRect(3,  16-walkPhase, 3, 2);
+  ctx2.globalAlpha=1; noGlow();
+
+  // ── TORSO ───────────────────────────────────────────────────────────
+  ctx2.fillStyle = S;
+  ctx2.fillRect(-9, -10, 18, 18);
+
+  glow(dc, 10);
+  ctx2.strokeStyle=dc; ctx2.lineWidth=1.5;
+  ctx2.beginPath(); ctx2.moveTo(-8,-4); ctx2.lineTo(8,-4); ctx2.stroke();  // chest
+  ctx2.beginPath(); ctx2.moveTo(-8, 1); ctx2.lineTo(8, 1); ctx2.stroke();  // mid
+  ctx2.beginPath(); ctx2.moveTo(-8, 6); ctx2.lineTo(8, 6); ctx2.stroke();  // lower
+  ctx2.lineWidth=1;
+  ctx2.beginPath(); ctx2.moveTo(0,-10); ctx2.lineTo(0,8);  ctx2.stroke();  // spine
+
+  // chest reactor glow
+  ctx2.fillStyle=dc; ctx2.globalAlpha=0.65;
+  ctx2.beginPath(); ctx2.arc(0,-1,3.5,0,Math.PI*2); ctx2.fill();
+  ctx2.globalAlpha=1; noGlow();
+
+  // ── SHOULDERS ───────────────────────────────────────────────────────
+  ctx2.fillStyle=S;
+  ctx2.fillRect(-18,-12, 10, 5);  // left
+  ctx2.fillRect(8,  -12, 10, 5);  // right
+  glow(dc,7); ctx2.fillStyle=dc; ctx2.globalAlpha=0.65;
+  ctx2.fillRect(-17,-12, 8, 2);
+  ctx2.fillRect(9,  -12, 8, 2);
+  ctx2.globalAlpha=1; noGlow();
+
+  // ── ARMS ────────────────────────────────────────────────────────────
+  ctx2.fillStyle=S;
+  ctx2.fillRect(-18,-7, 7, 14);  // left arm
+  ctx2.fillRect(11, -7, 7, 14);  // right arm
+  ctx2.fillStyle=dc; ctx2.globalAlpha=0.55;
+  ctx2.fillRect(-17,-2,4,2); ctx2.fillRect(-17,4,4,2);  // left stripes
+  ctx2.fillRect(13, -2,4,2); ctx2.fillRect(13, 4,4,2);  // right stripes
+  ctx2.globalAlpha=1;
+  // gauntlets
+  ctx2.fillStyle=S; ctx2.fillRect(-19,5,8,5); ctx2.fillRect(11,5,8,5);
+  ctx2.fillStyle=dc; ctx2.globalAlpha=0.6;
+  ctx2.fillRect(-18,5,6,2); ctx2.fillRect(12,5,6,2);
+  ctx2.globalAlpha=1;
+
+  // ── NECK ────────────────────────────────────────────────────────────
+  ctx2.fillStyle=S; ctx2.fillRect(-3,-16,6,7);
+
+  // ── HELMET ──────────────────────────────────────────────────────────
+  noGlow();
+  ctx2.fillStyle=S;
+  ctx2.beginPath(); ctx2.ellipse(0,-24,11,13,0,0,Math.PI*2); ctx2.fill();
+
+  glow(dc,20);
+  ctx2.strokeStyle=dc; ctx2.lineWidth=2;
+  ctx2.beginPath(); ctx2.ellipse(0,-24,10,12,0,0,Math.PI*2); ctx2.stroke();
+
+  // visor bar
+  ctx2.fillStyle=dc; ctx2.globalAlpha=0.75;
+  ctx2.beginPath(); ctx2.ellipse(0,-24,6,3,0,0,Math.PI*2); ctx2.fill();
+  ctx2.globalAlpha=1;
+
+  // helmet band lines
+  ctx2.strokeStyle=dc; ctx2.lineWidth=1; ctx2.globalAlpha=0.4;
+  ctx2.beginPath(); ctx2.ellipse(0,-22,7,5,0,0,Math.PI*2); ctx2.stroke();
+  ctx2.globalAlpha=1; noGlow();
+
+  // ── DISC (on arm when held) ─────────────────────────────────────────
+  if (hasDisc) {
+    const dr=9;
+    glow(dc,14);
+    ctx2.strokeStyle=dc; ctx2.lineWidth=2.5;
+    ctx2.beginPath(); ctx2.arc(15,-3,dr,0,Math.PI*2); ctx2.stroke();
+    noGlow();
+    ctx2.fillStyle='#020b14';
+    ctx2.beginPath(); ctx2.arc(15,-3,dr-3,0,Math.PI*2); ctx2.fill();
+    ctx2.strokeStyle=dc; ctx2.lineWidth=1; ctx2.globalAlpha=0.45;
+    ctx2.beginPath(); ctx2.arc(15,-3,dr-1,0,Math.PI*2); ctx2.stroke();
+    ctx2.globalAlpha=1;
+  }
+
+  // ── DODGE aura ──────────────────────────────────────────────────────
+  if (isDodging) {
+    glow(dc,28); ctx2.strokeStyle='#fff'; ctx2.lineWidth=2; ctx2.setLineDash([3,5]);
+    ctx2.beginPath(); ctx2.ellipse(0,5,20,33,0,0,Math.PI*2); ctx2.stroke();
+    ctx2.setLineDash([]); noGlow();
+  }
+
+  // ── "You" ring ───────────────────────────────────────────────────────
+  if (isMe) {
+    const pulse=0.3+0.2*Math.sin(Date.now()*0.005);
+    ctx2.strokeStyle='#fff'; ctx2.lineWidth=1.5; ctx2.globalAlpha=pulse;
+    ctx2.beginPath(); ctx2.ellipse(0,5,22,35,0,0,Math.PI*2); ctx2.stroke();
+    ctx2.globalAlpha=1;
+  }
+}
+
 function drawPlayer(p) {
   if (!p.alive) return;
   const {x,y}=p;
-  const c=p.color;
   const isFalling = p.fallTimer && p.fallTimer > 0;
-  const flashRed = isFalling && Math.floor(Date.now()/80)%2===0;
-  const drawColor = flashRed ? '#ff0000' : c;
+  const flashRed  = isFalling && Math.floor(Date.now()/80)%2===0;
+  const dc = flashRed ? '#ff4444' : p.color;
+  const isMoving = Math.abs(p.inputVx||0)+Math.abs(p.inputVy||0) > 0.15;
+  const walkPhase = isMoving ? Math.sin(Date.now()*0.013)*4 : 0;
+  const angle = Math.atan2(p.facing.y, p.facing.x) + Math.PI/2;
 
-  // dodge aura
-  if (p.dodging) {
-    glow(drawColor,40); ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.setLineDash([4,4]);
-    ctx.beginPath(); ctx.arc(x,y,P_R+8,0,Math.PI*2); ctx.stroke(); ctx.setLineDash([]);
-    noGlow();
-  }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+  drawProgram(ctx, dc, p.hasDisc, p.blocking, p.dodging, p.id===myId, walkPhase);
+  ctx.restore();
 
-  // main body circle
-  glow(drawColor,28);
-  ctx.fillStyle=drawColor;
-  ctx.beginPath(); ctx.arc(x,y,P_R,0,Math.PI*2); ctx.fill();
-  noGlow();
-
-  // inner dark (helmet)
-  ctx.fillStyle='#010a10';
-  ctx.beginPath(); ctx.arc(x,y,P_R*0.52,0,Math.PI*2); ctx.fill();
-
-  // circuit lines on body
-  ctx.strokeStyle=drawColor; ctx.lineWidth=1.5;
-  glow(drawColor,8);
-  // horizontal bars
-  ctx.beginPath(); ctx.moveTo(x-P_R*0.7, y-P_R*0.25); ctx.lineTo(x+P_R*0.7, y-P_R*0.25); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(x-P_R*0.7, y+P_R*0.25); ctx.lineTo(x+P_R*0.7, y+P_R*0.25); ctx.stroke();
-  // spine
-  ctx.lineWidth=1;
-  ctx.beginPath(); ctx.moveTo(x, y-P_R*0.6); ctx.lineTo(x, y+P_R*0.6); ctx.stroke();
-  // shoulder squares
-  ctx.fillStyle=drawColor;
-  ctx.fillRect(x-P_R*0.7-3, y-P_R*0.45, 5, 5);
-  ctx.fillRect(x+P_R*0.7-2, y-P_R*0.45, 5, 5);
-  noGlow();
-
-  // facing indicator line
-  glow(drawColor,12);
-  ctx.strokeStyle=drawColor; ctx.lineWidth=2.5;
-  ctx.beginPath();
-  ctx.moveTo(x+p.facing.x*P_R*0.55, y+p.facing.y*P_R*0.55);
-  ctx.lineTo(x+p.facing.x*(P_R+7),  y+p.facing.y*(P_R+7));
-  ctx.stroke();
-  noGlow();
-
-  // blocking shield (large ring in front)
+  // ── blocking disc shield (world space, in front) ────────────────────
   if (p.blocking) {
-    const sx=x+p.facing.x*P_R*1.2, sy=y+p.facing.y*P_R*1.2;
-    glow(drawColor,30);
-    ctx.strokeStyle=drawColor; ctx.lineWidth=4;
-    ctx.beginPath(); ctx.arc(sx,sy,P_R*1.1,0,Math.PI*2); ctx.stroke();
-    ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.arc(sx,sy,P_R*0.75,0,Math.PI*2); ctx.stroke();
+    const sx=x+p.facing.x*30, sy=y+p.facing.y*30;
+    glow(dc,35); ctx.strokeStyle=dc; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.arc(sx,sy,18,0,Math.PI*2); ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,0.55)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(sx,sy,11,0,Math.PI*2); ctx.stroke();
     noGlow();
   }
 
-  // "you" ring pulse
-  if (p.id===myId) {
-    const pulse=0.4+0.25*Math.sin(Date.now()*0.005);
-    ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.globalAlpha=pulse;
-    ctx.beginPath(); ctx.arc(x,y,P_R+7,0,Math.PI*2); ctx.stroke();
-    ctx.globalAlpha=1;
-  }
-
-  // name label
+  // ── name label (always upright) ─────────────────────────────────────
   const label = p.isBot ? '🤖 '+p.name : p.name;
-  ctx.fillStyle=drawColor; ctx.font='10px "Courier New"'; ctx.textAlign='center';
-  glow(drawColor,6); ctx.fillText(label,x,y-P_R-8); noGlow();
+  ctx.fillStyle=dc; ctx.font='bold 10px "Courier New"'; ctx.textAlign='center';
+  glow(dc,6); ctx.fillText(label,x,y-44); noGlow();
 }
 
 // ── draw disc ─────────────────────────────────────────────────────────

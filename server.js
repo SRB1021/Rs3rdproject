@@ -116,7 +116,9 @@ function makePlayer(id, idx, isBot) {
 }
 
 function makeRoom(code, hostId) {
-  return { code, hostId, players:{}, state:'lobby', arena:{...STD_ARENA}, bodies:[], winner:null, tileMap:null };
+  return { code, hostId, players:{}, state:'lobby', arena:{...STD_ARENA}, bodies:[], winner:null, tileMap:null,
+    gravity:{ x:0, y:0 }, gravityAngle:0, gravityTimer:0, gravityStrength:0,
+  };
 }
 
 function resetPlayer(p, pos) {
@@ -328,7 +330,7 @@ function checkWin(room) {
 function eliminatePlayer(room, other, killer) {
   other.alive=false;
   if(killer){ killer.score++; killer.hasDisc=true; killer.disc=null; }
-  room.bodies.push({id:other.id,x:other.x,y:other.y,color:other.color,name:other.name,angle:Math.random()*Math.PI*2});
+  room.bodies.push({id:other.id,x:other.x,y:other.y,color:other.color,name:other.name,angle:Math.atan2(other.facing.y,other.facing.x)});
   io.to(room.code).emit('playerEliminated',{id:other.id,killerId:killer?killer.id:null,killerName:killer?killer.name:'VOID'});
   checkWin(room);
 }
@@ -344,6 +346,21 @@ function tick(room, dt) {
   const tm=room.tileMap;
   const cx=tm?tm.cx:a.width/2, cy=tm?tm.cy:a.height/2;
   const R=tm?tm.R:Math.min(a.width,a.height)*0.44;
+
+  // ── gravity shift (in-game only) ────────────────────────────────────
+  const GRAVITY_STRENGTH_MAX = 90;  // px/s²
+  const GRAVITY_SHIFT_INTERVAL = 20; // seconds between shifts
+  if (inGame) {
+    room.gravityTimer += dt;
+    if (room.gravityTimer >= GRAVITY_SHIFT_INTERVAL) {
+      room.gravityTimer = 0;
+      room.gravityAngle += Math.PI * (0.4 + Math.random() * 0.7);
+      room.gravityStrength = 30 + Math.random() * 60;
+      room.gravity.x = Math.cos(room.gravityAngle) * room.gravityStrength;
+      room.gravity.y = Math.sin(room.gravityAngle) * room.gravityStrength;
+      io.to(room.code).emit('gravityShift', { angle: room.gravityAngle, strength: room.gravityStrength });
+    }
+  }
 
   // tick bots
   for (const p of Object.values(room.players)) {
@@ -408,6 +425,10 @@ function tick(room, dt) {
     if (d.returning) {
       const rx=p.x-d.x,ry=p.y-d.y,rl=Math.sqrt(rx*rx+ry*ry)||1;
       d.vx=(rx/rl)*DISC_RET; d.vy=(ry/rl)*DISC_RET;
+    } else {
+      // apply gravity drift to in-flight disc (not when homing back)
+      d.vx += room.gravity.x * dt;
+      d.vy += room.gravity.y * dt;
     }
     d.x+=d.vx*dt; d.y+=d.vy*dt;
 
@@ -476,6 +497,7 @@ setInterval(()=>{
       arena:  room.arena,
       state:  room.state,
       changedTiles,
+      gravity: room.gravity,
     });
   }
 },1000/TICK_RATE);
