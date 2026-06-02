@@ -8,8 +8,8 @@
 </head>
 <body>
 
-  <!-- LOBBY -->
-  <div id="lobby">
+  <!-- TITLE SCREEN -->
+  <div id="titleScreen">
     <div class="logo-wrap">
       <div class="logo-text">DISC WARS</div>
       <div class="logo-sub">TRON ARENA</div>
@@ -21,16 +21,49 @@
         <input id="nameInput" maxlength="18" placeholder="Program-1" spellcheck="false" />
       </div>
 
-      <div id="playerList" class="player-list"></div>
+      <div class="btn-row">
+        <button id="createBtn" class="tron-btn">CREATE LOBBY</button>
+        <button id="joinBtnOpen" class="tron-btn tron-btn-secondary">JOIN LOBBY</button>
+      </div>
 
-      <button id="startBtn" class="tron-btn">START GAME</button>
-      <div id="waitMsg" class="wait-msg" style="display:none">Waiting for host…</div>
+      <div id="joinRow" style="display:none">
+        <div class="field-row">
+          <label>ROOM CODE</label>
+          <div class="code-row">
+            <input id="codeInput" maxlength="4" placeholder="ABCD" spellcheck="false" style="text-transform:uppercase;letter-spacing:.3em" />
+            <button id="joinBtn" class="tron-btn" style="flex-shrink:0">JOIN</button>
+          </div>
+        </div>
+        <div id="joinError" class="error-msg" style="display:none"></div>
+      </div>
     </div>
 
     <div class="controls-guide">
       <div class="ctrl-row"><span class="key">W A S D</span> Move</div>
       <div class="ctrl-row"><span class="key">CLICK</span> Throw disc</div>
-      <div class="ctrl-row"><span class="key">D</span> Dodge roll (2 s cooldown)</div>
+      <div class="ctrl-row"><span class="key">D</span> Dodge</div>
+    </div>
+  </div>
+
+  <!-- LOBBY WAITING ROOM -->
+  <div id="lobby" style="display:none">
+    <div class="logo-wrap">
+      <div class="logo-text">DISC WARS</div>
+    </div>
+
+    <div class="lobby-panel">
+      <div class="room-code-display">
+        <span class="room-label">ROOM CODE</span>
+        <span id="roomCodeDisplay" class="room-code"></span>
+        <button id="copyCodeBtn" class="copy-btn" title="Copy code">⧉</button>
+      </div>
+
+      <div class="section-label">PROGRAMS IN ARENA</div>
+      <div id="playerList" class="player-list"></div>
+
+      <button id="startBtn" class="tron-btn">START GAME</button>
+      <div id="waitMsg" class="wait-msg" style="display:none">Waiting for host to start…</div>
+      <button id="leaveBtn" class="tron-btn tron-btn-secondary" style="margin-top:4px">LEAVE</button>
     </div>
   </div>
 
@@ -43,19 +76,17 @@
       <div id="hudCenter"></div>
     </div>
 
-    <!-- Final battle banner -->
     <div id="finalBanner" style="display:none">
       <div class="final-text">FINAL BATTLE</div>
     </div>
 
-    <!-- Game over -->
     <div id="gameOverScreen" style="display:none">
       <div class="go-title">END OF LINE</div>
       <div id="goWinner" class="go-winner"></div>
       <button class="tron-btn" id="playAgainBtn">PLAY AGAIN</button>
+      <button class="tron-btn tron-btn-secondary" id="leaveGameBtn" style="margin-top:8px">LEAVE LOBBY</button>
     </div>
 
-    <!-- Kill feed -->
     <div id="killFeed"></div>
   </div>
 

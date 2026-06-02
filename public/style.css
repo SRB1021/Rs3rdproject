@@ -104,6 +104,55 @@ input:focus { box-shadow: 0 0 8px var(--cyan); }
 
 .wait-msg { font-size: .8rem; letter-spacing: .1em; opacity: .6; text-align: center; }
 
+.tron-btn-secondary {
+  border-color: rgba(0,247,255,.35);
+  color: rgba(0,247,255,.5);
+  text-shadow: none;
+  box-shadow: none;
+}
+.tron-btn-secondary:hover {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: rgba(0,247,255,.07);
+}
+
+.btn-row { display: flex; gap: 10px; }
+.btn-row .tron-btn { flex: 1; }
+
+.code-row { display: flex; gap: 8px; }
+.code-row input { flex: 1; }
+
+.error-msg {
+  font-size: .75rem; letter-spacing: .05em;
+  color: #ff4455;
+  text-shadow: 0 0 6px #ff4455;
+  margin-top: 4px;
+}
+
+.room-code-display {
+  display: flex; align-items: center; gap: 10px;
+  background: rgba(0,247,255,.06);
+  border: 1px solid rgba(0,247,255,.3);
+  padding: 10px 14px;
+}
+.room-label { font-size: .65rem; letter-spacing: .2em; opacity: .6; }
+.room-code {
+  font-size: 1.6rem; font-weight: 900; letter-spacing: .35em;
+  color: var(--cyan);
+  text-shadow: 0 0 12px var(--cyan);
+  flex: 1;
+}
+.copy-btn {
+  background: transparent; border: 1px solid rgba(0,247,255,.35);
+  color: var(--cyan); font-size: .9rem; padding: 4px 8px;
+  cursor: pointer; font-family: inherit;
+}
+.copy-btn:hover { background: rgba(0,247,255,.1); }
+
+.section-label {
+  font-size: .65rem; letter-spacing: .2em; opacity: .5; margin-top: 4px;
+}
+
 .controls-guide {
   display: flex; gap: 20px;
   font-size: .75rem; letter-spacing: .06em; opacity: .6;

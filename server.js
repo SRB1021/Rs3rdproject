@@ -12,25 +12,42 @@ app.use(express.static(path.join(__dirname, 'public')));
 const TICK_RATE = 60;
 
 const STANDARD_ARENA = { width: 960, height: 640 };
-const FINAL_ARENA   = { width: 1280, height: 860 };
-const WALL          = 24;
-const P_RADIUS      = 18;
-const D_RADIUS      = 11;
-const P_SPEED       = 230;       // px/s
-const DISC_SPEED    = 500;       // px/s
+const FINAL_ARENA    = { width: 1280, height: 860 };
+const WALL           = 24;
+const P_RADIUS       = 18;
+const D_RADIUS       = 11;
+const P_SPEED        = 230;
+const DISC_SPEED     = 500;
 const DISC_RETURN_SPEED = 620;
-const DODGE_SPEED   = 680;
-const DODGE_DUR     = 0.26;      // s
-const DODGE_CD      = 0;         // no cooldown
-const BOUNCE_MAX    = 6;
-const RETURN_AFTER  = 2.8;       // s
+const DODGE_SPEED    = 680;
+const DODGE_DUR      = 0.26;
+const BOUNCE_MAX     = 6;
+const RETURN_AFTER   = 2.8;
 
 const COLORS = ['#00f7ff', '#ff6600', '#00ff88', '#ff00ff', '#ffee00', '#ff3355'];
 
-let rooms = {};
+const rooms = {};   // code → room
+const socketRoom = {}; // socketId → roomCode
 
-function createRoom(id) {
-  return { id, players: {}, state: 'lobby', arena: { ...STANDARD_ARENA }, winner: null };
+// ── Room helpers ──────────────────────────────────────────────────────
+
+function genCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  let code;
+  do { code = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join(''); }
+  while (rooms[code]);
+  return code;
+}
+
+function createRoom(code, hostId) {
+  return {
+    code,
+    hostId,
+    players: {},
+    state: 'lobby',
+    arena: { ...STANDARD_ARENA },
+    winner: null,
+  };
 }
 
 function createPlayer(id, colorIdx) {
@@ -48,22 +65,20 @@ function createPlayer(id, colorIdx) {
 
 function spawnPositions(n, arena) {
   const pad = 90;
-  const all = [
+  return [
     { x: pad,               y: pad },
     { x: arena.width - pad, y: arena.height - pad },
     { x: arena.width - pad, y: pad },
     { x: pad,               y: arena.height - pad },
     { x: arena.width / 2,   y: pad },
     { x: arena.width / 2,   y: arena.height - pad },
-  ];
-  return all.slice(0, n);
+  ].slice(0, n);
 }
 
 function startGame(room) {
   room.state  = 'playing';
   room.arena  = { ...STANDARD_ARENA };
   room.winner = null;
-
   const list = Object.values(room.players);
   const pos  = spawnPositions(list.length, room.arena);
   list.forEach((p, i) => {
@@ -73,8 +88,7 @@ function startGame(room) {
       x: pos[i].x, y: pos[i].y, inputVx: 0, inputVy: 0,
     });
   });
-
-  io.to(room.id).emit('gameStart', { arena: room.arena });
+  io.to(room.code).emit('gameStart', { arena: room.arena });
 }
 
 function makeDisc(player, tx, ty) {
@@ -95,7 +109,7 @@ function checkWin(room) {
     alive[0].score++;
     room.winner = alive[0].id;
     room.state  = 'gameOver';
-    io.to(room.id).emit('gameOver', { winnerId: alive[0].id, winnerName: alive[0].name });
+    io.to(room.code).emit('gameOver', { winnerId: alive[0].id, winnerName: alive[0].name });
     return;
   }
 
@@ -103,11 +117,8 @@ function checkWin(room) {
     room.state = 'finalBattle';
     room.arena = { ...FINAL_ARENA };
     const pos  = spawnPositions(2, room.arena);
-    alive.forEach((p, i) => {
-      p.x = pos[i].x; p.y = pos[i].y;
-      p.hasDisc = true; p.disc = null;
-    });
-    io.to(room.id).emit('finalBattle', { arena: room.arena });
+    alive.forEach((p, i) => { p.x = pos[i].x; p.y = pos[i].y; p.hasDisc = true; p.disc = null; });
+    io.to(room.code).emit('finalBattle', { arena: room.arena });
   }
 }
 
@@ -121,7 +132,6 @@ function tick(room, dt) {
   const alive = Object.values(room.players).filter(p => p.alive);
 
   for (const p of alive) {
-    // Movement
     if (p.dodging) {
       p.dodgeTimer -= dt;
       p.x += p.dodgeVx * dt;
@@ -142,14 +152,11 @@ function tick(room, dt) {
     p.x = Math.max(minX, Math.min(maxX, p.x));
     p.y = Math.max(minY, Math.min(maxY, p.y));
 
-    // Disc physics
     const d = p.disc;
     if (!d || !d.active) continue;
 
     d.timer += dt;
-    if (!d.returning && (d.timer > RETURN_AFTER || d.bounces >= BOUNCE_MAX)) {
-      d.returning = true;
-    }
+    if (!d.returning && (d.timer > RETURN_AFTER || d.bounces >= BOUNCE_MAX)) d.returning = true;
 
     if (d.returning) {
       const rx = p.x - d.x, ry = p.y - d.y;
@@ -161,55 +168,41 @@ function tick(room, dt) {
     d.x += d.vx * dt;
     d.y += d.vy * dt;
 
-    // Wall bounces (only while not returning)
     if (!d.returning) {
       const dMinX = WALL + D_RADIUS, dMaxX = a.width  - WALL - D_RADIUS;
       const dMinY = WALL + D_RADIUS, dMaxY = a.height - WALL - D_RADIUS;
-      if (d.x <= dMinX || d.x >= dMaxX) {
-        d.vx *= -1;
-        d.x = Math.max(dMinX, Math.min(dMaxX, d.x));
-        d.bounces++;
-      }
-      if (d.y <= dMinY || d.y >= dMaxY) {
-        d.vy *= -1;
-        d.y = Math.max(dMinY, Math.min(dMaxY, d.y));
-        d.bounces++;
-      }
+      if (d.x <= dMinX || d.x >= dMaxX) { d.vx *= -1; d.x = Math.max(dMinX, Math.min(dMaxX, d.x)); d.bounces++; }
+      if (d.y <= dMinY || d.y >= dMaxY) { d.vy *= -1; d.y = Math.max(dMinY, Math.min(dMaxY, d.y)); d.bounces++; }
     }
 
-    // Owner catch
     if (d.returning) {
       const cx = p.x - d.x, cy = p.y - d.y;
       if (Math.sqrt(cx * cx + cy * cy) < P_RADIUS + D_RADIUS + 12) {
-        p.hasDisc = true;
-        p.disc    = null;
-        io.to(room.id).emit('discCaught', { playerId: p.id });
+        p.hasDisc = true; p.disc = null;
+        io.to(room.code).emit('discCaught', { playerId: p.id });
         continue;
       }
     }
 
-    // Hit other players
     for (const other of alive) {
       if (other.id === p.id || !other.alive) continue;
       const hx = other.x - d.x, hy = other.y - d.y;
       if (Math.sqrt(hx * hx + hy * hy) < P_RADIUS + D_RADIUS) {
         if (!other.dodging) {
-          other.alive = false;
-          p.score++;
-          p.hasDisc = true;
-          p.disc    = null;
-          io.to(room.id).emit('playerEliminated', { id: other.id, killerId: p.id, killerName: p.name });
+          other.alive = false; p.score++;
+          p.hasDisc = true; p.disc = null;
+          io.to(room.code).emit('playerEliminated', { id: other.id, killerId: p.id, killerName: p.name });
           checkWin(room);
           break;
         }
-        // Dodged — disc bounces back
         d.vx *= -1; d.vy *= -1; d.returning = true;
       }
     }
   }
 }
 
-// Main loop
+// ── Main loop ─────────────────────────────────────────────────────────
+
 let last = Date.now();
 setInterval(() => {
   const now = Date.now();
@@ -219,7 +212,7 @@ setInterval(() => {
   for (const room of Object.values(rooms)) {
     tick(room, dt);
     if (room.state === 'playing' || room.state === 'finalBattle') {
-      io.to(room.id).emit('gameState', {
+      io.to(room.code).emit('gameState', {
         players: Object.values(room.players).map(p => ({
           id: p.id, name: p.name, color: p.color,
           x: p.x, y: p.y, alive: p.alive, hasDisc: p.hasDisc,
@@ -239,43 +232,109 @@ setInterval(() => {
   }
 }, 1000 / TICK_RATE);
 
-// Socket handlers
+// ── Socket events ─────────────────────────────────────────────────────
+
+function leaveRoom(socket) {
+  const code = socketRoom[socket.id];
+  if (!code || !rooms[code]) return;
+  const room = rooms[code];
+
+  delete room.players[socket.id];
+  delete socketRoom[socket.id];
+  socket.leave(code);
+
+  // If host left, promote next player or destroy
+  if (room.hostId === socket.id) {
+    const remaining = Object.keys(room.players);
+    if (remaining.length > 0) {
+      room.hostId = remaining[0];
+      io.to(code).emit('hostChanged', { hostId: room.hostId });
+    }
+  }
+
+  io.to(code).emit('playerLeft', { id: socket.id });
+
+  if (room.state === 'playing' || room.state === 'finalBattle') checkWin(room);
+  if (Object.keys(room.players).length === 0) delete rooms[code];
+}
+
 io.on('connection', (socket) => {
-  const roomId = 'main';
-  if (!rooms[roomId]) rooms[roomId] = createRoom(roomId);
-  const room = rooms[roomId];
 
-  socket.join(roomId);
-  socket.roomId = roomId;
+  socket.on('createRoom', ({ name }) => {
+    const code   = genCode();
+    const room   = createRoom(code, socket.id);
+    rooms[code]  = room;
 
-  const idx    = Object.keys(room.players).length;
-  const player = createPlayer(socket.id, idx);
-  room.players[socket.id] = player;
+    const colorIdx = 0;
+    const player   = createPlayer(socket.id, colorIdx);
+    player.name    = String(name || player.name).slice(0, 18);
+    room.players[socket.id] = player;
+    socketRoom[socket.id]   = code;
 
-  socket.emit('joined', {
-    playerId: socket.id,
-    player,
-    players: Object.values(room.players),
-    state: room.state,
-    arena: room.arena,
+    socket.join(code);
+    socket.emit('roomCreated', {
+      code, playerId: socket.id, player,
+      players: Object.values(room.players),
+      state: room.state,
+    });
   });
-  socket.to(roomId).emit('playerJoined', { player });
+
+  socket.on('joinRoom', ({ code, name }) => {
+    const upper = String(code).toUpperCase().trim();
+    const room  = rooms[upper];
+
+    if (!room) {
+      socket.emit('joinError', { message: 'Room not found.' });
+      return;
+    }
+    if (room.state !== 'lobby' && room.state !== 'gameOver') {
+      socket.emit('joinError', { message: 'Game already in progress.' });
+      return;
+    }
+    if (Object.keys(room.players).length >= 6) {
+      socket.emit('joinError', { message: 'Room is full (6 max).' });
+      return;
+    }
+
+    const colorIdx = Object.keys(room.players).length;
+    const player   = createPlayer(socket.id, colorIdx);
+    player.name    = String(name || player.name).slice(0, 18);
+    room.players[socket.id] = player;
+    socketRoom[socket.id]   = upper;
+
+    socket.join(upper);
+
+    socket.emit('roomJoined', {
+      code: upper, playerId: socket.id, player,
+      players: Object.values(room.players),
+      state: room.state, hostId: room.hostId,
+    });
+
+    socket.to(upper).emit('playerJoined', { player });
+  });
 
   socket.on('setName', (name) => {
-    const p = room.players[socket.id];
+    const code = socketRoom[socket.id];
+    if (!code || !rooms[code]) return;
+    const p = rooms[code].players[socket.id];
     if (p) {
       p.name = String(name).slice(0, 18) || p.name;
-      io.to(roomId).emit('playerUpdate', { id: socket.id, name: p.name });
+      io.to(code).emit('playerUpdate', { id: socket.id, name: p.name });
     }
   });
 
   socket.on('startGame', () => {
-    if (room.state === 'lobby' || room.state === 'gameOver') {
-      startGame(room);
-    }
+    const code = socketRoom[socket.id];
+    if (!code || !rooms[code]) return;
+    const room = rooms[code];
+    if (room.hostId !== socket.id) return;
+    if (room.state === 'lobby' || room.state === 'gameOver') startGame(room);
   });
 
   socket.on('input', ({ vx, vy }) => {
+    const code = socketRoom[socket.id];
+    if (!code || !rooms[code]) return;
+    const room = rooms[code];
     const p = room.players[socket.id];
     if (!p || !p.alive) return;
     if (room.state !== 'playing' && room.state !== 'finalBattle') return;
@@ -285,34 +344,36 @@ io.on('connection', (socket) => {
   });
 
   socket.on('throwDisc', ({ tx, ty }) => {
+    const code = socketRoom[socket.id];
+    if (!code || !rooms[code]) return;
+    const room = rooms[code];
     const p = room.players[socket.id];
     if (!p || !p.alive || !p.hasDisc) return;
     if (room.state !== 'playing' && room.state !== 'finalBattle') return;
     p.hasDisc = false;
     p.disc    = makeDisc(p, tx, ty);
-    io.to(roomId).emit('discThrown', { playerId: p.id });
+    io.to(code).emit('discThrown', { playerId: p.id });
   });
 
   socket.on('dodge', () => {
+    const code = socketRoom[socket.id];
+    if (!code || !rooms[code]) return;
+    const room = rooms[code];
     const p = room.players[socket.id];
-    if (!p || !p.alive || p.dodging || p.dodgeCooldown > 0) return;
+    if (!p || !p.alive || p.dodging) return;
     if (room.state !== 'playing' && room.state !== 'finalBattle') return;
     const dx = p.inputVx || p.facing.x;
     const dy = p.inputVy || p.facing.y;
     const l  = Math.sqrt(dx * dx + dy * dy) || 1;
     p.dodging     = true;
     p.dodgeTimer  = DODGE_DUR;
-    p.dodgeCooldown = DODGE_CD;
+    p.dodgeCooldown = 0;
     p.dodgeVx     = (dx / l) * DODGE_SPEED;
     p.dodgeVy     = (dy / l) * DODGE_SPEED;
   });
 
-  socket.on('disconnect', () => {
-    delete room.players[socket.id];
-    io.to(roomId).emit('playerLeft', { id: socket.id });
-    if (room.state === 'playing' || room.state === 'finalBattle') checkWin(room);
-    if (Object.keys(room.players).length === 0) delete rooms[roomId];
-  });
+  socket.on('leaveRoom', () => leaveRoom(socket));
+  socket.on('disconnect', () => leaveRoom(socket));
 });
 
 const PORT = process.env.PORT || 3000;
