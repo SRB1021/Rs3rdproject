@@ -218,7 +218,9 @@ input:focus { box-shadow: 0 0 8px var(--cyan); }
 
 #gameCanvas {
   display: block;
-  cursor: crosshair;
+  width: 100% !important;
+  height: 100% !important;
+  cursor: none;
 }
 
 /* HUD */

@@ -9,8 +9,8 @@ const io     = new Server(server, { cors: { origin: '*' } });
 app.use(express.static(path.join(__dirname, 'public')));
 
 const TICK_RATE    = 60;
-const STD_ARENA    = { width: 960, height: 640 };
-const FINAL_ARENA  = { width: 1280, height: 860 };
+const STD_ARENA    = { width: 1440, height: 1000 };
+const FINAL_ARENA  = { width: 1800, height: 1300 };
 const P_R          = 18;
 const D_R          = 11;
 const P_SPEED      = 230;
@@ -622,6 +622,13 @@ io.on('connection', socket=>{
     const code=socketRoom[socket.id]; if (!code||!rooms[code]) return;
     const p=rooms[code].players[socket.id]; if (!p) return;
     p.blocking=false;
+  });
+
+  socket.on('setFacing',({fx,fy})=>{
+    const code=socketRoom[socket.id]; if (!code||!rooms[code]) return;
+    const p=rooms[code].players[socket.id]; if (!p||p.isBot) return;
+    const l=Math.sqrt(fx*fx+fy*fy)||1;
+    p.facing.x=fx/l; p.facing.y=fy/l;
   });
 
   socket.on('leaveRoom',()=>leaveRoom(socket));

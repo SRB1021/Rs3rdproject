@@ -5,6 +5,36 @@
   <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>DISC WARS</title>
   <link rel="stylesheet" href="style.css"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    #crosshair {
+      position: absolute; top: 50%; left: 50%;
+      transform: translate(-50%,-50%);
+      width: 20px; height: 20px;
+      pointer-events: none; display: none; z-index: 50;
+    }
+    #crosshair::before, #crosshair::after {
+      content: ''; position: absolute;
+      background: rgba(0,247,255,0.85);
+      box-shadow: 0 0 6px #00f7ff;
+    }
+    #crosshair::before { width: 2px; height: 20px; left: 9px; top: 0; }
+    #crosshair::after  { width: 20px; height: 2px; left: 0; top: 9px; }
+    #lockMsg {
+      position: absolute; bottom: 30%; left: 50%; transform: translateX(-50%);
+      font-family: 'Courier New', monospace; font-size: .85rem;
+      letter-spacing: .15em; color: rgba(0,247,255,0.6);
+      pointer-events: none; z-index: 50; display: none;
+      text-shadow: 0 0 8px #00f7ff;
+    }
+    #gravIndicator {
+      position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+      font-size: .7rem; letter-spacing: .12em; color: var(--orange);
+      text-shadow: 0 0 8px var(--orange); opacity: 0;
+      transition: opacity 0.5s; pointer-events: none; z-index: 50;
+    }
+    #gravIndicator.visible { opacity: 1; }
+  </style>
 </head>
 <body>
 
@@ -37,18 +67,23 @@
     </div>
 
     <div class="controls-guide">
-      <div class="ctrl-row"><span class="key">W A S D</span> Move</div>
+      <div class="ctrl-row"><span class="key">W S Q E</span> Move / Strafe</div>
+      <div class="ctrl-row"><span class="key">MOUSE</span> Look</div>
       <div class="ctrl-row"><span class="key">CLICK</span> Throw disc</div>
       <div class="ctrl-row"><span class="key">SHIFT</span> Block</div>
       <div class="ctrl-row"><span class="key">D</span> Dodge</div>
     </div>
   </div>
 
-  <!-- ARENA (lobby + game combined) -->
+  <!-- ARENA -->
   <div id="arenaWrap" style="display:none">
     <canvas id="gameCanvas"></canvas>
 
-    <!-- Lobby overlay — shown before game starts -->
+    <div id="crosshair"></div>
+    <div id="lockMsg">CLICK TO ENTER ARENA</div>
+    <div id="gravIndicator">⚠ GRAVITY SHIFT</div>
+
+    <!-- Lobby overlay -->
     <div id="lobbyOverlay">
       <div class="lo-top">
         <div class="room-code-display">
@@ -72,7 +107,7 @@
       </div>
     </div>
 
-    <!-- HUD — shown during game -->
+    <!-- HUD -->
     <div id="hud" style="display:none">
       <div id="hudPlayers"></div>
       <div id="hudCenter"></div>
@@ -83,7 +118,7 @@
       <div class="final-text">FINAL BATTLE</div>
     </div>
 
-    <!-- Game over overlay -->
+    <!-- Game over -->
     <div id="gameOverScreen" style="display:none">
       <div class="go-title">END OF LINE</div>
       <div id="goWinner" class="go-winner"></div>
