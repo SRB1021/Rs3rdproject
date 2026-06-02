@@ -119,8 +119,12 @@ function resizeRenderer() {
 }
 
 // ── Arena geometry ─────────────────────────────────────────────────────────
+let _domeLightObjs = []; // tracked so we can remove on arena rebuild
+
 function buildArena(radius) {
   [rimMesh, wallMesh, floorMesh].forEach(m => { if (m) scene.remove(m); });
+  _domeLightObjs.forEach(o => scene.remove(o));
+  _domeLightObjs = [];
 
   // Black void below tiles
   const vGeo = new THREE.CircleGeometry(radius + 80, 64);
@@ -147,13 +151,176 @@ function buildArena(radius) {
   rimMesh.position.y = 0.5;
   scene.add(rimMesh);
 
-  // Arena lighting
-  const cL = new THREE.PointLight(0x0088cc, 1.5, radius * 3);
+  // Soft fill lighting from floor level
+  const cL = new THREE.PointLight(0x0088cc, 1.0, radius * 3);
   cL.position.set(0, 80, 0);
   scene.add(cL);
-  const fL = new THREE.PointLight(0x003355, 4, radius * 1.5);
+  const fL = new THREE.PointLight(0x003355, 3, radius * 1.5);
   fL.position.set(0, 10, 0);
   scene.add(fL);
+
+  buildDomeLights(radius);
+}
+
+function buildDomeLights(radius) {
+  const DOME_H    = 280;           // height of the light ring
+  const LIGHT_R   = radius * 0.58; // radius of the spotlight circle
+  const N         = 8;             // number of spotlights
+
+  // ── Structural ring that holds the lights ─────────────────────────────
+  const ringGeo = new THREE.TorusGeometry(LIGHT_R, 4, 8, 80);
+  const ringMat = new THREE.MeshStandardMaterial({
+    color: 0x0a1a22, emissive: 0x001133, emissiveIntensity: 0.4,
+    metalness: 0.95, roughness: 0.15
+  });
+  const ring = new THREE.Mesh(ringGeo, ringMat);
+  ring.rotation.x = Math.PI / 2;
+  ring.position.y = DOME_H;
+  scene.add(ring);
+  _domeLightObjs.push(ring);
+
+  // Inner accent ring (smaller, brighter)
+  const innerRingGeo = new THREE.TorusGeometry(radius * 0.18, 2.5, 8, 48);
+  const innerRingMat = new THREE.MeshBasicMaterial({ color: 0xaaddff });
+  const innerRing = new THREE.Mesh(innerRingGeo, innerRingMat);
+  innerRing.rotation.x = Math.PI / 2;
+  innerRing.position.y = DOME_H + 8;
+  scene.add(innerRing);
+  _domeLightObjs.push(innerRing);
+  // Glow from center ring
+  const centerLight = new THREE.PointLight(0x88bbff, 1.2, 300);
+  centerLight.position.set(0, DOME_H, 0);
+  scene.add(centerLight);
+  _domeLightObjs.push(centerLight);
+
+  // Radial struts connecting outer ring to center
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    const strutGeo = new THREE.CylinderGeometry(0.8, 0.8, LIGHT_R - radius * 0.18, 4);
+    const strutMat = new THREE.MeshStandardMaterial({
+      color: 0x0a1a22, metalness: 0.9, roughness: 0.2
+    });
+    const strut = new THREE.Mesh(strutGeo, strutMat);
+    strut.rotation.z = Math.PI / 2;
+    // Position at midpoint between center ring and outer ring, rotated
+    const midR = (LIGHT_R + radius * 0.18) / 2;
+    strut.position.set(Math.cos(a) * midR, DOME_H, Math.sin(a) * midR);
+    strut.rotation.z = Math.PI / 2;
+    strut.rotation.y = -a;
+    scene.add(strut);
+    _domeLightObjs.push(strut);
+  }
+
+  // ── 8 spotlight fixtures ───────────────────────────────────────────────
+  const SPOT_ANGLE = Math.PI / 7.5;
+  const BEAM_H     = DOME_H;
+  const BEAM_R     = BEAM_H * Math.tan(SPOT_ANGLE) * 1.1;
+
+  for (let i = 0; i < N; i++) {
+    const a  = (i / N) * Math.PI * 2;
+    const lx = Math.cos(a) * LIGHT_R;
+    const lz = Math.sin(a) * LIGHT_R;
+
+    // ── SpotLight ──────────────────────────────────────────────────────
+    const spot = new THREE.SpotLight(0xccddff, 2.5, DOME_H + 30, SPOT_ANGLE, 0.28, 1.4);
+    spot.position.set(lx, DOME_H, lz);
+    // Aim slightly toward arena center so beams converge
+    spot.target.position.set(lx * 0.35, 0, lz * 0.35);
+    scene.add(spot);
+    scene.add(spot.target);
+    _domeLightObjs.push(spot, spot.target);
+
+    // ── Visible beam cone ──────────────────────────────────────────────
+    // Apex at lamp, base at floor — ConeGeometry apex is at +y end
+    const beamGeo = new THREE.ConeGeometry(BEAM_R, BEAM_H, 20, 1, true);
+    const beamMat = new THREE.MeshBasicMaterial({
+      color: 0x88bbff,
+      transparent: true,
+      opacity: 0.032,
+      side: THREE.FrontSide,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    const beam = new THREE.Mesh(beamGeo, beamMat);
+    // Mesh center is at mid-height; apex (+y) ends at DOME_H
+    beam.position.set(lx, DOME_H / 2, lz);
+    scene.add(beam);
+    _domeLightObjs.push(beam);
+
+    // Second beam pass at lower opacity for extra glow depth
+    const beam2 = new THREE.Mesh(
+      new THREE.ConeGeometry(BEAM_R * 0.55, BEAM_H, 16, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.018,
+        side: THREE.FrontSide,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending
+      })
+    );
+    beam2.position.set(lx, DOME_H / 2, lz);
+    scene.add(beam2);
+    _domeLightObjs.push(beam2);
+
+    // ── Lamp housing ───────────────────────────────────────────────────
+    const housingGeo = new THREE.CylinderGeometry(5, 8, 12, 10);
+    const housingMat = new THREE.MeshStandardMaterial({
+      color: 0x0d1f2a, emissive: 0x001122, emissiveIntensity: 0.2,
+      metalness: 0.95, roughness: 0.1
+    });
+    const housing = new THREE.Mesh(housingGeo, housingMat);
+    housing.position.set(lx, DOME_H + 6, lz);
+    scene.add(housing);
+    _domeLightObjs.push(housing);
+
+    // Lens disc (glowing face of the lamp)
+    const lensGeo = new THREE.CircleGeometry(6.5, 16);
+    const lensMat = new THREE.MeshBasicMaterial({ color: 0xddeeff });
+    const lens = new THREE.Mesh(lensGeo, lensMat);
+    lens.rotation.x = Math.PI / 2; // face downward
+    lens.position.set(lx, DOME_H - 0.5, lz);
+    scene.add(lens);
+    _domeLightObjs.push(lens);
+
+    // Lens glow halo
+    const haloGeo = new THREE.CircleGeometry(10, 16);
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: 0x88bbff, transparent: true, opacity: 0.25,
+      depthWrite: false, blending: THREE.AdditiveBlending
+    });
+    const halo = new THREE.Mesh(haloGeo, haloMat);
+    halo.rotation.x = Math.PI / 2;
+    halo.position.set(lx, DOME_H - 1, lz);
+    scene.add(halo);
+    _domeLightObjs.push(halo);
+
+    // Bright point at each lamp for local bloom
+    const lampPt = new THREE.PointLight(0xbbddff, 0.8, 60);
+    lampPt.position.set(lx, DOME_H - 5, lz);
+    scene.add(lampPt);
+    _domeLightObjs.push(lampPt);
+  }
+
+  // ── Floor pool circles (lit zones where beams hit) ───────────────────
+  for (let i = 0; i < N; i++) {
+    const a   = (i / N) * Math.PI * 2;
+    const px  = Math.cos(a) * LIGHT_R * 0.35;
+    const pz  = Math.sin(a) * LIGHT_R * 0.35;
+    const poolGeo = new THREE.CircleGeometry(BEAM_R * 0.7, 32);
+    const poolMat = new THREE.MeshBasicMaterial({
+      color: 0x224466,
+      transparent: true,
+      opacity: 0.18,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending
+    });
+    const pool = new THREE.Mesh(poolGeo, poolMat);
+    pool.rotation.x = -Math.PI / 2;
+    pool.position.set(px, 0.05, pz);
+    scene.add(pool);
+    _domeLightObjs.push(pool);
+  }
 }
 
 // ── Tile map ───────────────────────────────────────────────────────────────
