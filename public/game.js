@@ -26,17 +26,18 @@ let gravity = { x: 0, y: 0 };
 
 // ── Three.js objects ──────────────────────────────────────────────────────
 let renderer, scene, camera, animId;
-const playerMeshes = {};   // id → THREE.Group
-const discMeshes   = {};   // ownerId → THREE.Group
-const tileMeshes   = {};   // 'q,r' → THREE.Mesh
-const tileData     = new Map(); // 'q,r' → {q,r,wx,wz,state}
+const playerMeshes = {};
+const discMeshes   = {};
+const tileMeshes   = {};
+const tileData     = new Map();
 let rimMesh = null, wallMesh = null, floorMesh = null;
 
 // ── Camera / pointer lock ─────────────────────────────────────────────────
 let yaw = 0, pitch = 0;
 let pointerLocked = false;
-let myFacingX = 0, myFacingZ = 1;
-const EYE_H     = 30;
+let myFacingX = 0, myFacingZ = 1; // Three.js axes: facing +Z = server +Y
+
+const EYE_H      = 30;
 const DISC_FLY_H = 20;
 
 // ── Input ─────────────────────────────────────────────────────────────────
@@ -45,6 +46,16 @@ const keys = {};
 // ── Hex constants (must match server) ────────────────────────────────────
 const HEX_SIZE = 26;
 const SQ3 = Math.sqrt(3);
+
+// ── Coordinate helpers ────────────────────────────────────────────────────
+// Server uses (0,0)=top-left of arena; Three.js tiles are centered at origin.
+// Subtract arena center before placing anything in 3D space.
+function toScene(sx, sy) {
+  return {
+    x: sx - arenaInfo.width  / 2,
+    z: sy - arenaInfo.height / 2
+  };
+}
 
 // ── Hex math ──────────────────────────────────────────────────────────────
 function hexToWorld3(q, r) {
@@ -66,33 +77,33 @@ function initThree() {
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000408);
-  scene.fog = new THREE.FogExp2(0x000510, 0.00055);
+  scene.fog = new THREE.FogExp2(0x000510, 0.00045);
 
   camera = new THREE.PerspectiveCamera(72, 1, 0.5, 3000);
   camera.rotation.order = 'YXZ';
 
-  // Ambient + directional
+  // Ambient + directional shadow light
   scene.add(new THREE.AmbientLight(0x001830, 2.5));
   const dir = new THREE.DirectionalLight(0x002244, 1.2);
   dir.position.set(0, 300, 0);
   dir.castShadow = true;
   dir.shadow.mapSize.set(1024, 1024);
-  dir.shadow.camera.near = 1;
-  dir.shadow.camera.far = 800;
-  dir.shadow.camera.left = dir.shadow.camera.bottom = -600;
-  dir.shadow.camera.right = dir.shadow.camera.top = 600;
+  dir.shadow.camera.near = 1; dir.shadow.camera.far = 900;
+  dir.shadow.camera.left = dir.shadow.camera.bottom = -700;
+  dir.shadow.camera.right = dir.shadow.camera.top = 700;
   scene.add(dir);
 
-  // Ceiling grid gives the TRON city feel
+  // Ceiling grid — TRON city feel
   const ceilGeo = new THREE.PlaneGeometry(6000, 6000, 40, 40);
   const ceilMat = new THREE.MeshBasicMaterial({
     color: 0x002244, wireframe: true, transparent: true, opacity: 0.07
   });
   const ceil = new THREE.Mesh(ceilGeo, ceilMat);
   ceil.rotation.x = Math.PI / 2;
-  ceil.position.y = 280;
+  ceil.position.y = 300;
   scene.add(ceil);
 
+  // Initial resize — must use window dimensions since arenaWrap may have 0 size yet
   resizeRenderer();
   window.addEventListener('resize', resizeRenderer);
   setupPointerLock(canvas);
@@ -100,8 +111,8 @@ function initThree() {
 }
 
 function resizeRenderer() {
-  const w = arenaWrap.clientWidth  || window.innerWidth;
-  const h = arenaWrap.clientHeight || window.innerHeight;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
   renderer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
@@ -111,43 +122,42 @@ function resizeRenderer() {
 function buildArena(radius) {
   [rimMesh, wallMesh, floorMesh].forEach(m => { if (m) scene.remove(m); });
 
-  // Void underfloor
+  // Black void below tiles
   const vGeo = new THREE.CircleGeometry(radius + 80, 64);
   const vMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
   floorMesh = new THREE.Mesh(vGeo, vMat);
   floorMesh.rotation.x = -Math.PI / 2;
-  floorMesh.position.y = -5;
+  floorMesh.position.y = -6;
   scene.add(floorMesh);
 
-  // Tall glowing cylinder wall (inside surface)
-  const wGeo = new THREE.CylinderGeometry(radius, radius, 200, 72, 1, true);
+  // Tall glowing inner cylinder wall
+  const wGeo = new THREE.CylinderGeometry(radius, radius, 220, 72, 1, true);
   const wMat = new THREE.MeshBasicMaterial({
     color: 0x00f7ff, side: THREE.BackSide, transparent: true, opacity: 0.07
   });
   wallMesh = new THREE.Mesh(wGeo, wMat);
-  wallMesh.position.y = 90;
+  wallMesh.position.y = 100;
   scene.add(wallMesh);
 
-  // Glowing floor ring
-  const rGeo = new THREE.TorusGeometry(radius, 2, 8, 128);
+  // Glowing floor rim
+  const rGeo = new THREE.TorusGeometry(radius, 2.5, 8, 128);
   const rMat = new THREE.MeshBasicMaterial({ color: 0x00f7ff });
   rimMesh = new THREE.Mesh(rGeo, rMat);
   rimMesh.rotation.x = Math.PI / 2;
   rimMesh.position.y = 0.5;
   scene.add(rimMesh);
 
-  // Central glow
-  const cLight = new THREE.PointLight(0x0088cc, 1.2, radius * 2.5);
-  cLight.position.set(0, 60, 0);
-  scene.add(cLight);
-  const fLight = new THREE.PointLight(0x003355, 3.5, radius * 1.8);
-  fLight.position.set(0, 8, 0);
-  scene.add(fLight);
+  // Arena lighting
+  const cL = new THREE.PointLight(0x0088cc, 1.5, radius * 3);
+  cL.position.set(0, 80, 0);
+  scene.add(cL);
+  const fL = new THREE.PointLight(0x003355, 4, radius * 1.5);
+  fL.position.set(0, 10, 0);
+  scene.add(fL);
 }
 
 // ── Tile map ───────────────────────────────────────────────────────────────
 function buildTileMap(arena) {
-  // Remove old tiles
   tileData.forEach((_, key) => removeTileMesh(key));
   tileData.clear();
 
@@ -156,8 +166,7 @@ function buildTileMap(arena) {
   for (let q = -range; q <= range; q++) {
     for (let r = -range; r <= range; r++) {
       const { x: wx, z: wz } = hexToWorld3(q, r);
-      const dist = Math.sqrt(wx * wx + wz * wz);
-      if (dist > R - HEX_SIZE * 0.5) continue;
+      if (Math.sqrt(wx * wx + wz * wz) > R - HEX_SIZE * 0.5) continue;
       const key = `${q},${r}`;
       tileData.set(key, { q, r, wx, wz, state: 0 });
       spawnTileMesh(key, wx, wz, 0);
@@ -169,15 +178,13 @@ function spawnTileMesh(key, wx, wz, state) {
   removeTileMesh(key);
   if (state === 2) return;
 
-  const geo = new THREE.CylinderGeometry(HEX_SIZE * 0.94, HEX_SIZE * 0.94, 4, 6);
-  let color, emissive, emissiveIntensity;
-  if (state === 0) {
-    color = 0x001a22; emissive = 0x003344; emissiveIntensity = 0.18;
-  } else {
-    color = 0x2a0a00; emissive = 0x883300; emissiveIntensity = 0.7;
-  }
+  const geo = new THREE.CylinderGeometry(HEX_SIZE * 0.93, HEX_SIZE * 0.93, 4, 6);
+  const isIntact = state === 0;
   const mat = new THREE.MeshStandardMaterial({
-    color, emissive, emissiveIntensity, roughness: 0.35, metalness: 0.7
+    color:             isIntact ? 0x001a22 : 0x2a0a00,
+    emissive:          isIntact ? 0x003344 : 0x883300,
+    emissiveIntensity: isIntact ? 0.18     : 0.7,
+    roughness: 0.35, metalness: 0.7
   });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.y = Math.PI / 6;
@@ -203,7 +210,7 @@ function makePlayerGroup(color) {
   const col = new THREE.Color(color);
 
   const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0x060606, emissive: col, emissiveIntensity: 0.08,
+    color: 0x060606, emissive: col, emissiveIntensity: 0.07,
     roughness: 0.25, metalness: 0.9
   });
   const glowMat = new THREE.MeshStandardMaterial({
@@ -226,7 +233,7 @@ function makePlayerGroup(color) {
   torso.position.set(0, 25, 0);
   group.add(torso);
 
-  // Chest glow lines
+  // Chest lines
   const chest = new THREE.Mesh(new THREE.BoxGeometry(8, 2, 1), glowMat);
   chest.position.set(0, 27, 6.5);
   group.add(chest);
@@ -234,9 +241,8 @@ function makePlayerGroup(color) {
   mid.position.set(0, 23, 6.5);
   group.add(mid);
 
-  // Chest reactor sphere
-  const reactorGeo = new THREE.SphereGeometry(2, 8, 8);
-  const reactor = new THREE.Mesh(reactorGeo, glowMat);
+  // Chest reactor
+  const reactor = new THREE.Mesh(new THREE.SphereGeometry(2, 8, 8), glowMat);
   reactor.position.set(0, 25, 6.8);
   group.add(reactor);
   const rLight = new THREE.PointLight(col, 0.5, 50);
@@ -249,9 +255,9 @@ function makePlayerGroup(color) {
     arm.position.set(ox, 23, 0);
     arm.rotation.z = rz;
     group.add(arm);
-    const astripe = new THREE.Mesh(new THREE.BoxGeometry(1, 10, 1.2), glowMat);
-    astripe.position.set(ox * 1.1, 23, 2.5);
-    group.add(astripe);
+    const stripe2 = new THREE.Mesh(new THREE.BoxGeometry(1, 10, 1.2), glowMat);
+    stripe2.position.set(ox > 0 ? ox + 1 : ox - 1, 23, 2.5);
+    group.add(stripe2);
   }
 
   // Head
@@ -271,14 +277,13 @@ function makePlayerGroup(color) {
   band.rotation.x = Math.PI / 2;
   group.add(band);
 
-  group.userData.col = col;
   return group;
 }
 
 function getOrMakePlayerMesh(id, color, isMe) {
   if (playerMeshes[id]) return playerMeshes[id];
   const g = makePlayerGroup(color);
-  if (isMe) g.visible = false; // first-person: don't render own body
+  if (isMe) g.visible = false;
   scene.add(g);
   playerMeshes[id] = g;
   return g;
@@ -296,18 +301,21 @@ function getOrMakeDiscMesh(ownerId, color) {
   if (discMeshes[ownerId]) return discMeshes[ownerId];
 
   const group = new THREE.Group();
-  const col = new THREE.Color(color || 0x00f7ff);
+  const col = new THREE.Color(color || '#00f7ff');
 
-  const geo = new THREE.CylinderGeometry(11, 11, 3, 24);
-  const mat = new THREE.MeshStandardMaterial({
-    color: col, emissive: col, emissiveIntensity: 1.0,
-    roughness: 0.1, metalness: 0.7, transparent: true, opacity: 0.9
-  });
-  group.add(new THREE.Mesh(geo, mat));
+  const mesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(11, 11, 3, 24),
+    new THREE.MeshStandardMaterial({
+      color: col, emissive: col, emissiveIntensity: 1.0,
+      roughness: 0.1, metalness: 0.7, transparent: true, opacity: 0.9
+    })
+  );
+  group.add(mesh);
 
-  const ringGeo = new THREE.TorusGeometry(11, 1.8, 8, 32);
-  const ringMat = new THREE.MeshBasicMaterial({ color: col });
-  const ring = new THREE.Mesh(ringGeo, ringMat);
+  const ring = new THREE.Mesh(
+    new THREE.TorusGeometry(11, 1.8, 8, 32),
+    new THREE.MeshBasicMaterial({ color: col })
+  );
   ring.rotation.x = Math.PI / 2;
   group.add(ring);
 
@@ -326,16 +334,17 @@ function removeDiscMesh(ownerId) {
   delete discMeshes[ownerId];
 }
 
-// ── Dead body on floor ─────────────────────────────────────────────────────
+// ── Dead body silhouette ───────────────────────────────────────────────────
 function spawnBodyMesh(body) {
   const col = new THREE.Color(body.color || '#444444');
-  // Flat silhouette
-  const geo = new THREE.CylinderGeometry(10, 10, 1.5, 8);
-  const mat = new THREE.MeshStandardMaterial({
-    color: 0x111111, emissive: col, emissiveIntensity: 0.12
-  });
-  const m = new THREE.Mesh(geo, mat);
-  m.position.set(body.x, 0.8, body.y);
+  const m = new THREE.Mesh(
+    new THREE.CylinderGeometry(10, 10, 1.5, 8),
+    new THREE.MeshStandardMaterial({
+      color: 0x111111, emissive: col, emissiveIntensity: 0.12
+    })
+  );
+  const s = toScene(body.x, body.y);
+  m.position.set(s.x, 0.8, s.z);
   m.receiveShadow = true;
   scene.add(m);
 }
@@ -363,7 +372,7 @@ function setupPointerLock(canvas) {
     const sens = 0.0017;
     yaw   -= e.movementX * sens;
     pitch -= e.movementY * sens;
-    pitch = Math.max(-0.55, Math.min(0.55, pitch));
+    pitch  = Math.max(-0.55, Math.min(0.55, pitch));
     myFacingX = Math.sin(yaw);
     myFacingZ = Math.cos(yaw);
     socket.emit('setFacing', { fx: myFacingX, fy: myFacingZ });
@@ -373,6 +382,7 @@ function setupPointerLock(canvas) {
 function doThrowDisc() {
   const me = players[myId];
   if (!me || !me.alive || !me.hasDisc) return;
+  // Target in server world coords (not 3D scene coords)
   const tx = me.x + myFacingX * 2000;
   const ty = me.y + myFacingZ * 2000;
   socket.emit('throwDisc', { tx, ty });
@@ -391,9 +401,7 @@ function setupInput() {
     if (e.key === 'Shift' && (gamePhase === 'playing' || gamePhase === 'finalBattle')) {
       socket.emit('blockStart');
     }
-    if (k === 'escape' && pointerLocked) {
-      document.exitPointerLock();
-    }
+    if (k === 'escape' && pointerLocked) document.exitPointerLock();
   });
   window.addEventListener('keyup', e => {
     keys[e.key.toLowerCase()] = false;
@@ -401,110 +409,100 @@ function setupInput() {
   });
 }
 
-let _lastInputVx = 0, _lastInputVy = 0;
+let _lastVx = 0, _lastVy = 0;
 function sendInput() {
   if (!myId) return;
-  if (gamePhase !== 'playing' && gamePhase !== 'finalBattle' && gamePhase !== 'lobby') return;
+  if (gamePhase !== 'playing' && gamePhase !== 'finalBattle') return;
 
-  // Strafe axes (facing is Z-forward, X-right in Three.js→server coords)
+  // Forward (server +Y = Three.js +Z) and strafe (server +X = Three.js +X)
   const fwX = myFacingX, fwZ = myFacingZ;
-  const stX = myFacingZ,  stZ = -myFacingX; // perpendicular right
+  const stX =  myFacingZ, stZ = -myFacingX; // 90° left of forward
 
   let vx = 0, vy = 0;
-  if (keys['w'])                   { vx += fwX; vy += fwZ; }
-  if (keys['s'])                   { vx -= fwX; vy -= fwZ; }
-  if (keys['q'] || keys['a'])      { vx -= stX; vy -= stZ; }
-  if (keys['e'])                   { vx += stX; vy += stZ; }
+  if (keys['w'])              { vx += fwX; vy += fwZ; }
+  if (keys['s'])              { vx -= fwX; vy -= fwZ; }
+  if (keys['q'] || keys['a']) { vx -= stX; vy -= stZ; }
+  if (keys['e'])              { vx += stX; vy += stZ; }
 
   const l = Math.sqrt(vx * vx + vy * vy);
   if (l > 0) { vx /= l; vy /= l; }
 
-  if (vx !== _lastInputVx || vy !== _lastInputVy) {
-    _lastInputVx = vx; _lastInputVy = vy;
+  if (vx !== _lastVx || vy !== _lastVy) {
+    _lastVx = vx; _lastVy = vy;
     socket.emit('input', { vx, vy });
   }
 }
 
-// ── Update camera each frame ───────────────────────────────────────────────
+// ── Update camera ──────────────────────────────────────────────────────────
 function updateCamera() {
   const me = players[myId];
   if (!me) return;
   camera.rotation.y = yaw;
   camera.rotation.x = pitch;
-  camera.position.set(me.x, EYE_H, me.y);
+  const s = toScene(me.x, me.y);
+  camera.position.set(s.x, EYE_H, s.z);
 }
 
-// ── Update 3D scene from server state ────────────────────────────────────
-let _discRotAngle = 0;
+// ── Update scene from server state ────────────────────────────────────────
+let _discRot = 0;
 function updateScene() {
-  _discRotAngle += 0.06;
-
-  const seenPlayers = new Set();
-  const seenDiscs   = new Set();
+  _discRot += 0.06;
+  const seenDiscs = new Set();
 
   Object.values(players).forEach(p => {
-    seenPlayers.add(p.id);
     const group = getOrMakePlayerMesh(p.id, p.color, p.id === myId);
+
     if (p.id === myId) {
-      group.position.set(p.x, 0, p.y);
+      // Own body hidden in first-person; still placed for shadow
+      const s = toScene(p.x, p.y);
+      group.position.set(s.x, 0, s.z);
+
+      // Show held disc at arm level
+      if (p.hasDisc) {
+        seenDiscs.add(p.id);
+        const dm = getOrMakeDiscMesh(p.id, p.color);
+        dm.position.set(s.x + Math.cos(yaw) * 14, EYE_H - 10, s.z - Math.sin(yaw) * 14);
+        dm.rotation.y = _discRot;
+      }
+      // Disc in flight
+      if (p.disc) {
+        seenDiscs.add(p.id);
+        const ds = toScene(p.disc.x, p.disc.y);
+        const dm = getOrMakeDiscMesh(p.id, p.color);
+        dm.position.set(ds.x, DISC_FLY_H, ds.z);
+        dm.rotation.y = _discRot;
+      }
       return;
     }
+
     group.visible = !!p.alive;
     if (!p.alive) return;
-    group.position.set(p.x, 0, p.y);
+
+    const s = toScene(p.x, p.y);
+    group.position.set(s.x, 0, s.z);
     group.rotation.y = Math.atan2(p.facing.x, p.facing.y);
 
-    // Disc held on right arm
     if (p.hasDisc) {
       seenDiscs.add(p.id);
-      const dm = getOrMakeDiscMesh(p.id, p.color);
       const angle = Math.atan2(p.facing.x, p.facing.y);
-      dm.position.set(
-        p.x + Math.cos(angle) * 10,
-        22,
-        p.y - Math.sin(angle) * 10
-      );
-      dm.rotation.y = _discRotAngle;
-    }
-
-    // Disc in flight
-    if (p.disc) {
-      seenDiscs.add(p.id);
       const dm = getOrMakeDiscMesh(p.id, p.color);
-      dm.position.set(p.disc.x, DISC_FLY_H, p.disc.y);
-      dm.rotation.y = _discRotAngle;
+      dm.position.set(s.x + Math.cos(angle) * 10, 22, s.z - Math.sin(angle) * 10);
+      dm.rotation.y = _discRot;
+    } else if (p.disc) {
+      seenDiscs.add(p.id);
+      const ds = toScene(p.disc.x, p.disc.y);
+      const dm = getOrMakeDiscMesh(p.id, p.color);
+      dm.position.set(ds.x, DISC_FLY_H, ds.z);
+      dm.rotation.y = _discRot;
     }
   });
 
-  // My own disc
-  const me = players[myId];
-  if (me) {
-    if (me.hasDisc) {
-      seenDiscs.add(myId);
-      const dm = getOrMakeDiscMesh(myId, me.color);
-      // Show disc just below camera (arm view)
-      const camRight = Math.cos(yaw);
-      dm.position.set(me.x + camRight * 14, EYE_H - 10, me.y - Math.sin(yaw) * 14);
-      dm.rotation.y = _discRotAngle;
-    }
-    if (me.disc) {
-      seenDiscs.add(myId);
-      const dm = getOrMakeDiscMesh(myId, me.color);
-      dm.position.set(me.disc.x, DISC_FLY_H, me.disc.y);
-      dm.rotation.y = _discRotAngle;
-    }
-  }
-
-  // Remove stale meshes
-  Object.keys(playerMeshes).forEach(id => {
-    if (!seenPlayers.has(id)) removePlayerMesh(id);
-  });
-  Object.keys(discMeshes).forEach(id => {
-    if (!seenDiscs.has(id)) removeDiscMesh(id);
-  });
+  // Remove stale player/disc meshes
+  Object.keys(playerMeshes).forEach(id => { if (!players[id]) removePlayerMesh(id); });
+  Object.keys(discMeshes).forEach(id => { if (!seenDiscs.has(id)) removeDiscMesh(id); });
 }
 
-// ── Tile flicker animation ────────────────────────────────────────────────
+// ── Tile cracking animation ────────────────────────────────────────────────
 let _lastTileAnim = 0;
 function animateTiles(ts) {
   if (ts - _lastTileAnim < 80) return;
@@ -517,10 +515,8 @@ function animateTiles(ts) {
 }
 
 // ── Render loop ────────────────────────────────────────────────────────────
-let _lastTs = 0;
 function gameLoop(ts) {
   animId = requestAnimationFrame(gameLoop);
-  _lastTs = ts;
   sendInput();
   updateCamera();
   updateScene();
@@ -581,24 +577,25 @@ function addKillFeed(killer, victim) {
   setTimeout(() => el.remove(), 3600);
 }
 
-// ── Show/hide scenes ───────────────────────────────────────────────────────
+// ── Show/hide screens ──────────────────────────────────────────────────────
 function showTitle() {
-  titleScreen.style.display   = 'flex';
-  arenaWrap.style.display     = 'none';
+  titleScreen.style.display  = 'flex';
+  arenaWrap.style.display    = 'none';
 }
 
 function showArena() {
-  titleScreen.style.display   = 'none';
-  arenaWrap.style.display     = 'block';
-  lobbyOverlay.style.display  = 'flex';
-  hud.style.display           = 'none';
+  titleScreen.style.display  = 'none';
+  arenaWrap.style.display    = 'block';
+  lobbyOverlay.style.display = 'flex';
+  hud.style.display          = 'none';
   gameOverScreen.style.display = 'none';
 
   if (!renderer) {
     initThree();
     startLoop();
   }
-  resizeRenderer();
+  // Resize after layout settles
+  setTimeout(resizeRenderer, 50);
 }
 
 function enterGame(arena) {
@@ -610,17 +607,16 @@ function enterGame(arena) {
   lockMsgEl.style.display = 'block';
   buildArena(arena.radius);
   buildTileMap(arena);
-  // Request pointer lock on next click handled in click listener
 }
 
 function doLeave() {
   socket.emit('leaveRoom');
   myRoomCode = null; hostId = null; players = {}; bodies = [];
   gamePhase = 'title';
+  tileData.forEach((_, k) => removeTileMesh(k));
   tileData.clear();
-  Object.keys(tileMeshes).forEach(k => removeTileMesh(k));
-  Object.keys(playerMeshes).forEach(id => removePlayerMesh(id));
-  Object.keys(discMeshes).forEach(id => removeDiscMesh(id));
+  Object.keys(playerMeshes).forEach(removePlayerMesh);
+  Object.keys(discMeshes).forEach(removeDiscMesh);
   if (pointerLocked) document.exitPointerLock();
   crosshairEl.style.display = 'none';
   lockMsgEl.style.display   = 'none';
@@ -652,7 +648,7 @@ socket.on('roomJoined', ({ code, playerId, players: ps, arena: a, hostId: h, bod
   showArena();
   buildArena(a.radius);
   buildTileMap(a);
-  bodies.forEach(body => spawnBodyMesh(body));
+  bodies.forEach(spawnBodyMesh);
   updateLobbyOverlay();
   Audio.startChanting();
 });
@@ -662,15 +658,14 @@ socket.on('joinError', ({ message }) => {
   el.textContent = message; el.style.display = 'block';
 });
 
-socket.on('playerJoined',  ({ player }) => { players[player.id] = player; updateLobbyOverlay(); });
-socket.on('playerLeft',    ({ id })     => { delete players[id]; if (gamePhase === 'lobby' || gamePhase === 'gameOver') updateLobbyOverlay(); });
-socket.on('playerUpdate',  ({ id, name }) => { if (players[id]) { players[id].name = name; } updateLobbyOverlay(); });
-socket.on('hostChanged',   ({ hostId: h }) => { hostId = h; updateLobbyOverlay(); });
+socket.on('playerJoined',  ({ player })      => { players[player.id] = player; updateLobbyOverlay(); });
+socket.on('playerLeft',    ({ id })          => { delete players[id]; if (gamePhase === 'lobby') updateLobbyOverlay(); });
+socket.on('playerUpdate',  ({ id, name })    => { if (players[id]) players[id].name = name; updateLobbyOverlay(); });
+socket.on('hostChanged',   ({ hostId: h })   => { hostId = h; updateLobbyOverlay(); });
 
 socket.on('gameStart', ({ arena: a }) => {
   Audio.stopChanting(); Audio.startMusic();
   enterGame(a);
-  // Auto-lock pointer
   renderer.domElement.requestPointerLock();
 });
 
@@ -695,10 +690,9 @@ socket.on('gameState', ({ players: ps, bodies: b, arena: a, state, changedTiles,
   if (changedTiles && changedTiles.length) {
     changedTiles.forEach(({ id, state: ts }) => {
       const t = tileData.get(id);
-      if (!t) return;
-      const prev = t.state;
+      if (!t || t.state === ts) return;
       t.state = ts;
-      if (prev !== ts) spawnTileMesh(id, t.wx, t.wz, ts);
+      spawnTileMesh(id, t.wx, t.wz, ts);
     });
   }
 
@@ -718,22 +712,14 @@ socket.on('playerEliminated', ({ id, killerName }) => {
   const p = players[id];
   if (p) {
     p.alive = false;
-    spawnBodyMesh({
-      x: p.x, y: p.y,
-      color: p.color,
-    });
+    spawnBodyMesh({ x: p.x, y: p.y, color: p.color });
   }
   addKillFeed(killerName || 'VOID', p?.name || id);
   if (id === myId && pointerLocked) document.exitPointerLock();
 });
 
-socket.on('discThrown', ({ playerId }) => {
-  if (playerId !== myId) Audio.throwDisc();
-});
-
-socket.on('discCaught', ({ playerId }) => {
-  if (playerId === myId) Audio.discCatch();
-});
+socket.on('discThrown', ({ playerId }) => { if (playerId !== myId) Audio.throwDisc(); });
+socket.on('discCaught', ({ playerId }) => { if (playerId === myId) Audio.discCatch(); });
 
 socket.on('gameOver', ({ winnerId, winnerName }) => {
   gamePhase = 'gameOver';
@@ -741,7 +727,8 @@ socket.on('gameOver', ({ winnerId, winnerName }) => {
   if (pointerLocked) document.exitPointerLock();
   crosshairEl.style.display = 'none';
   lockMsgEl.style.display   = 'none';
-  document.getElementById('goWinner').textContent = winnerId === myId ? 'YOU WIN, PROGRAM.' : `${winnerName} WINS`;
+  document.getElementById('goWinner').textContent = winnerId === myId
+    ? 'YOU WIN, PROGRAM.' : `${winnerName} WINS`;
   document.getElementById('playAgainBtn').style.display = myId === hostId ? 'block' : 'none';
   gameOverScreen.style.display = 'flex';
   lobbyOverlay.style.display   = 'none';
@@ -761,7 +748,7 @@ document.getElementById('joinBtnOpen').addEventListener('click', () => {
 });
 document.getElementById('joinBtn').addEventListener('click', doJoin);
 document.getElementById('codeInput').addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
-document.getElementById('codeInput').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
+document.getElementById('codeInput').addEventListener('input',   e => { e.target.value = e.target.value.toUpperCase(); });
 
 function doJoin() {
   Audio.init();
@@ -772,22 +759,22 @@ function doJoin() {
   });
 }
 
-document.getElementById('startBtn').addEventListener('click', () => socket.emit('startGame'));
-document.getElementById('addBotBtn').addEventListener('click', () => socket.emit('addBot'));
-document.getElementById('removeBotBtn').addEventListener('click', () => socket.emit('removeBot'));
+document.getElementById('startBtn').addEventListener('click',    () => socket.emit('startGame'));
+document.getElementById('addBotBtn').addEventListener('click',   () => socket.emit('addBot'));
+document.getElementById('removeBotBtn').addEventListener('click',() => socket.emit('removeBot'));
 document.getElementById('copyCodeBtn').addEventListener('click', () => {
   navigator.clipboard?.writeText(myRoomCode).catch(() => {});
   const b = document.getElementById('copyCodeBtn');
   b.textContent = '✓'; setTimeout(() => b.textContent = '⧉', 1500);
 });
-document.getElementById('leaveBtn').addEventListener('click', doLeave);
+document.getElementById('leaveBtn').addEventListener('click',     doLeave);
 document.getElementById('leaveGameBtn').addEventListener('click', doLeave);
 document.getElementById('playAgainBtn').addEventListener('click', () => {
   gameOverScreen.style.display = 'none';
   gamePhase = 'lobby';
   lobbyOverlay.style.display = 'flex';
   hud.style.display = 'none';
-  Object.keys(tileMeshes).forEach(k => removeTileMesh(k));
+  tileData.forEach((_, k) => removeTileMesh(k));
   tileData.clear();
   socket.emit('startGame');
 });
