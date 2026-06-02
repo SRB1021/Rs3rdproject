@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DISC WARS</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- LOBBY -->
+  <div id="lobby">
+    <div class="logo-wrap">
+      <div class="logo-text">DISC WARS</div>
+      <div class="logo-sub">TRON ARENA</div>
+    </div>
+
+    <div class="lobby-panel">
+      <div class="field-row">
+        <label>YOUR NAME</label>
+        <input id="nameInput" maxlength="18" placeholder="Program-1" spellcheck="false" />
+      </div>
+
+      <div id="playerList" class="player-list"></div>
+
+      <button id="startBtn" class="tron-btn">START GAME</button>
+      <div id="waitMsg" class="wait-msg" style="display:none">Waiting for host…</div>
+    </div>
+
+    <div class="controls-guide">
+      <div class="ctrl-row"><span class="key">W A S D</span> Move</div>
+      <div class="ctrl-row"><span class="key">CLICK</span> Throw disc</div>
+      <div class="ctrl-row"><span class="key">D</span> Dodge roll (2 s cooldown)</div>
+    </div>
+  </div>
+
+  <!-- GAME -->
+  <div id="gameWrap" style="display:none">
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="hud">
+      <div id="hudPlayers"></div>
+      <div id="hudCenter"></div>
+    </div>
+
+    <!-- Final battle banner -->
+    <div id="finalBanner" style="display:none">
+      <div class="final-text">FINAL BATTLE</div>
+    </div>
+
+    <!-- Game over -->
+    <div id="gameOverScreen" style="display:none">
+      <div class="go-title">END OF LINE</div>
+      <div id="goWinner" class="go-winner"></div>
+      <button class="tron-btn" id="playAgainBtn">PLAY AGAIN</button>
+    </div>
+
+    <!-- Kill feed -->
+    <div id="killFeed"></div>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="audio.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
