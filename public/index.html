@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
   <title>DISC WARS</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
 
@@ -18,19 +18,17 @@
     <div class="lobby-panel">
       <div class="field-row">
         <label>YOUR NAME</label>
-        <input id="nameInput" maxlength="18" placeholder="Program-1" spellcheck="false" />
+        <input id="nameInput" maxlength="18" placeholder="Program-1" spellcheck="false"/>
       </div>
-
       <div class="btn-row">
         <button id="createBtn" class="tron-btn">CREATE LOBBY</button>
         <button id="joinBtnOpen" class="tron-btn tron-btn-secondary">JOIN LOBBY</button>
       </div>
-
       <div id="joinRow" style="display:none">
-        <div class="field-row">
+        <div class="field-row" style="margin-top:10px">
           <label>ROOM CODE</label>
           <div class="code-row">
-            <input id="codeInput" maxlength="4" placeholder="ABCD" spellcheck="false" style="text-transform:uppercase;letter-spacing:.3em" />
+            <input id="codeInput" maxlength="4" placeholder="ABCD" spellcheck="false" style="text-transform:uppercase;letter-spacing:.3em"/>
             <button id="joinBtn" class="tron-btn" style="flex-shrink:0">JOIN</button>
           </div>
         </div>
@@ -45,48 +43,56 @@
     </div>
   </div>
 
-  <!-- LOBBY WAITING ROOM -->
-  <div id="lobby" style="display:none">
-    <div class="logo-wrap">
-      <div class="logo-text">DISC WARS</div>
-    </div>
-
-    <div class="lobby-panel">
-      <div class="room-code-display">
-        <span class="room-label">ROOM CODE</span>
-        <span id="roomCodeDisplay" class="room-code"></span>
-        <button id="copyCodeBtn" class="copy-btn" title="Copy code">⧉</button>
-      </div>
-
-      <div class="section-label">PROGRAMS IN ARENA</div>
-      <div id="playerList" class="player-list"></div>
-
-      <button id="startBtn" class="tron-btn">START GAME</button>
-      <div id="waitMsg" class="wait-msg" style="display:none">Waiting for host to start…</div>
-      <button id="leaveBtn" class="tron-btn tron-btn-secondary" style="margin-top:4px">LEAVE</button>
-    </div>
-  </div>
-
-  <!-- GAME -->
-  <div id="gameWrap" style="display:none">
+  <!-- ARENA (lobby + game combined) -->
+  <div id="arenaWrap" style="display:none">
     <canvas id="gameCanvas"></canvas>
 
-    <div id="hud">
+    <!-- Lobby overlay — shown before game starts -->
+    <div id="lobbyOverlay">
+      <div class="lo-top">
+        <div class="room-code-display">
+          <span class="room-label">ROOM</span>
+          <span id="roomCodeDisplay" class="room-code"></span>
+          <button id="copyCodeBtn" class="copy-btn" title="Copy">⧉</button>
+        </div>
+      </div>
+
+      <div class="lo-bottom">
+        <div id="playerListLobby" class="player-list-arena"></div>
+        <div class="lo-actions">
+          <div id="botRow" style="display:none" class="bot-row">
+            <button id="addBotBtn"    class="tron-btn tron-btn-sm">+ CPU</button>
+            <button id="removeBotBtn" class="tron-btn tron-btn-secondary tron-btn-sm">− CPU</button>
+          </div>
+          <button id="startBtn" class="tron-btn" style="display:none">START GAME</button>
+          <div id="waitMsg" class="wait-msg">Waiting for host to start…</div>
+          <button id="leaveBtn" class="tron-btn tron-btn-secondary tron-btn-sm">LEAVE</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- HUD — shown during game -->
+    <div id="hud" style="display:none">
       <div id="hudPlayers"></div>
       <div id="hudCenter"></div>
     </div>
 
+    <!-- Final battle banner -->
     <div id="finalBanner" style="display:none">
       <div class="final-text">FINAL BATTLE</div>
     </div>
 
+    <!-- Game over overlay -->
     <div id="gameOverScreen" style="display:none">
       <div class="go-title">END OF LINE</div>
       <div id="goWinner" class="go-winner"></div>
-      <button class="tron-btn" id="playAgainBtn">PLAY AGAIN</button>
-      <button class="tron-btn tron-btn-secondary" id="leaveGameBtn" style="margin-top:8px">LEAVE LOBBY</button>
+      <div class="btn-row" style="justify-content:center;gap:12px;margin-top:8px">
+        <button class="tron-btn" id="playAgainBtn" style="display:none">PLAY AGAIN</button>
+        <button class="tron-btn tron-btn-secondary" id="leaveGameBtn">LEAVE</button>
+      </div>
     </div>
 
+    <!-- Kill feed -->
     <div id="killFeed"></div>
   </div>
 
