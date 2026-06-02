@@ -259,7 +259,6 @@ function updateHUD() {
     el.innerHTML = `
       <span class="hud-name">${p.name}${p.id === myId ? ' ◀' : ''}</span>
       <span class="hud-disc">${p.alive ? (p.hasDisc ? '◈ DISC READY' : (p.dodging ? '⚡ DODGING' : '◌ disc away')) : '✕ DEREZZED'}</span>
-      ${p.alive && p.dodgeCooldown > 0 ? `<div style="height:2px;background:rgba(255,255,255,.1);margin-top:3px"><div style="height:100%;width:${dodgePct}%;background:${p.color};transition:width .1s"></div></div>` : ''}
     `;
     hud.appendChild(el);
   });

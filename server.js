@@ -21,7 +21,7 @@ const DISC_SPEED    = 500;       // px/s
 const DISC_RETURN_SPEED = 620;
 const DODGE_SPEED   = 680;
 const DODGE_DUR     = 0.26;      // s
-const DODGE_CD      = 2.2;       // s
+const DODGE_CD      = 0;         // no cooldown
 const BOUNCE_MAX    = 6;
 const RETURN_AFTER  = 2.8;       // s
 
