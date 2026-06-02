@@ -181,8 +181,8 @@ const Audio = (() => {
     for(let s=0;s<16;s++){
       const freq=HOOK[s]; if(!freq) continue;
       const ht=t+s*S16;
-      osc('square',   freq,     vol*(isFinal?0.18:0.13), leadChain,   ht, S16*0.7, 0.005);
-      osc('sawtooth', freq*0.5, vol*(isFinal?0.08:0.05), rev.input,   ht, S16*0.8, 0.008);
+      osc('sawtooth', freq,     vol*(isFinal?0.16:0.11), leadChain,   ht, S16*0.65, 0.005);
+      osc('sawtooth', freq*0.5, vol*(isFinal?0.07:0.04), rev.input,   ht, S16*0.8,  0.008);
     }
 
     // ── Chord stabs (dark minor) ──────────────────────────────────────
@@ -190,7 +190,7 @@ const Audio = (() => {
       const st=t+beat*BEAT;
       notes.forEach(f=>{
         osc('sawtooth', f, vol*0.12, rev.input, st, BEAT*0.18, 0.01);
-        osc('square',   f, vol*0.06, comp,      st, BEAT*0.10, 0.005);
+        osc('sawtooth', f, vol*0.05, comp,      st, BEAT*0.10, 0.005);
       });
     });
 
