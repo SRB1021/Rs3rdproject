@@ -74,8 +74,9 @@ function hexToWorld3(q, r) {
 // ── Init Three.js ─────────────────────────────────────────────────────────
 function initThree() {
   const canvas = document.getElementById('gameCanvas');
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: !isMobile, powerPreference: 'high-performance' });
+  renderer.setPixelRatio(isMobile ? Math.min(window.devicePixelRatio, 1.5) : Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -84,7 +85,7 @@ function initThree() {
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
-  scene.fog = new THREE.FogExp2(0x000204, 0.00022);
+  scene.fog = new THREE.FogExp2(0x000005, 0.00018);
 
   camera = new THREE.PerspectiveCamera(68, 1, 0.5, 4000);
   camera.rotation.order = 'YXZ';
@@ -96,9 +97,9 @@ function initThree() {
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   pmrem.dispose();
 
-  scene.add(new THREE.AmbientLight(0x020408, 0.8));
+  scene.add(new THREE.AmbientLight(0x010206, 0.35));
 
-  const dir = new THREE.DirectionalLight(0x7799bb, 0.3);
+  const dir = new THREE.DirectionalLight(0x4466aa, 0.12);
   dir.position.set(80, 500, 120);
   dir.castShadow = true;
   dir.shadow.mapSize.set(2048, 2048);
@@ -113,6 +114,7 @@ function initThree() {
   window.addEventListener('resize', resizeRenderer);
   setupPointerLock(canvas);
   setupInput();
+  setupMobileControls();
   setupPostProcessing();
 }
 
@@ -148,42 +150,41 @@ function setupPostProcessing() {
     SSAOPass, SMAAPass, FilmPass, BokehPass, ShaderPass, VignetteShader
   } = window.PP;
   const w = window.innerWidth, h = window.innerHeight;
+  const isMobile = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
   composer = new EffectComposer(renderer);
 
   // 1. Scene render
   composer.addPass(new RenderPass(scene, camera));
 
-  // 2. SSAO — ambient occlusion, grounding and depth
-  const ssao = new SSAOPass(scene, camera, w, h);
-  ssao.kernelRadius = 28; ssao.minDistance = 0.001; ssao.maxDistance = 0.055;
-  composer.addPass(ssao);
+  if (!isMobile) {
+    // 2. SSAO — ambient occlusion (desktop only, too heavy on mobile)
+    const ssao = new SSAOPass(scene, camera, w, h);
+    ssao.kernelRadius = 28; ssao.minDistance = 0.001; ssao.maxDistance = 0.055;
+    composer.addPass(ssao);
+  }
 
   // 3. HDR bloom — neon glow halos
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 1.2, 0.55, 0.16));
+  const bloomStrength = isMobile ? 1.4 : 1.2;
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), bloomStrength, 0.55, 0.16));
 
-  // 4. Depth of field — shallow focus like a real movie camera
-  const dof = new BokehPass(scene, camera, {
-    focus:    180.0,   // focus distance (units)
-    aperture: 0.00004, // smaller = sharper, larger = more blur
-    maxblur:  0.006,
-    width: w, height: h
-  });
-  composer.addPass(dof);
+  if (!isMobile) {
+    // 4. Depth of field (desktop only)
+    composer.addPass(new BokehPass(scene, camera, {
+      focus: 180.0, aperture: 0.00004, maxblur: 0.006, width: w, height: h
+    }));
+    // 5. Chromatic aberration
+    composer.addPass(new ShaderPass(ChromaticAberrationShader));
+    // 6. SMAA
+    composer.addPass(new SMAAPass(w, h));
+  }
 
-  // 5. Chromatic aberration — lens colour fringing
-  const chroma = new ShaderPass(ChromaticAberrationShader);
-  composer.addPass(chroma);
+  // 7. Film grain
+  composer.addPass(new FilmPass(isMobile ? 0.15 : 0.22, 0.0, 648, false));
 
-  // 6. SMAA — clean up jagged edges
-  composer.addPass(new SMAAPass(w, h));
-
-  // 7. Film grain — cinematic texture noise
-  composer.addPass(new FilmPass(0.22, 0.0, 648, false));
-
-  // 8. Vignette — darkens corners like a real lens
+  // 8. Vignette
   const vignette = new ShaderPass(VignetteShader);
-  vignette.uniforms['offset'].value = 0.80;
-  vignette.uniforms['darkness'].value = 1.8;
+  vignette.uniforms['offset'].value = isMobile ? 0.75 : 0.80;
+  vignette.uniforms['darkness'].value = isMobile ? 1.6 : 1.8;
   composer.addPass(vignette);
 }
 
@@ -213,19 +214,22 @@ const _matCracking = new THREE.MeshStandardMaterial({
 
 // ── Arena geometry ─────────────────────────────────────────────────────────
 let _arenaObjs = [];
+let _smokeParts = null, _smokeVels = null;
 
 function buildArena(r) {
   _arenaObjs.forEach(o => scene.remove(o));
   _arenaObjs = [];
+  _smokeParts = null;
   [rimMesh, wallMesh, floorMesh].forEach(m => { if (m) scene.remove(m); });
 
   r = r || 480;
+  const _mob = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 
-  // ── Combat platform floor (elevated disc) ─────────────────────────────────
+  // ── Combat platform floor (mirror-dark disc) ──────────────────────────────
   floorMesh = new THREE.Mesh(
-    new THREE.CircleGeometry(r + 20, 64),
+    new THREE.CircleGeometry(r + 22, 80),
     new THREE.MeshStandardMaterial({
-      color: 0x000608, roughness: 0.04, metalness: 1.0, envMapIntensity: 2.5
+      color: 0x000204, roughness: 0.02, metalness: 1.0, envMapIntensity: 3.0
     })
   );
   floorMesh.rotation.x = -Math.PI / 2;
@@ -233,21 +237,33 @@ function buildArena(r) {
   floorMesh.receiveShadow = true;
   scene.add(floorMesh);
 
-  // ── Arena inner wall (combat ring) ───────────────────────────────────────
-  wallMesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(r, r, 180, 80, 1, true),
+  // Platform underside — glowing cyan slab edge visible from sides
+  const undersideRing = new THREE.Mesh(
+    new THREE.CylinderGeometry(r + 22, r + 22, 8, 80, 1, true),
     new THREE.MeshStandardMaterial({
-      color: 0x000d1a, roughness: 0.5, metalness: 0.7, side: THREE.BackSide
+      color: 0x003344, emissive: 0x00ccff, emissiveIntensity: 1.5,
+      roughness: 0.1, metalness: 0.0, side: THREE.BackSide
     })
   );
-  wallMesh.position.y = 85;
+  undersideRing.position.y = -9;
+  scene.add(undersideRing);
+  _arenaObjs.push(undersideRing);
+
+  // ── Arena inner wall (combat ring) — nearly invisible in darkness ─────────
+  wallMesh = new THREE.Mesh(
+    new THREE.CylinderGeometry(r, r, 220, 80, 1, true),
+    new THREE.MeshStandardMaterial({
+      color: 0x000608, roughness: 0.7, metalness: 0.5, side: THREE.BackSide
+    })
+  );
+  wallMesh.position.y = 100;
   scene.add(wallMesh);
 
-  // Neon floor rim (bright cyan edge of combat platform)
+  // Neon floor rim (bright cyan edge)
   rimMesh = new THREE.Mesh(
-    new THREE.TorusGeometry(r, 4, 8, 120),
+    new THREE.TorusGeometry(r + 2, 5, 8, 120),
     new THREE.MeshStandardMaterial({
-      color: 0x00f7ff, emissive: 0x00f7ff, emissiveIntensity: 3.5,
+      color: 0x00f7ff, emissive: 0x00f7ff, emissiveIntensity: 4.0,
       roughness: 0.0, metalness: 0.0
     })
   );
@@ -255,221 +271,243 @@ function buildArena(r) {
   rimMesh.position.y = 1;
   scene.add(rimMesh);
 
-  // Horizontal wall strip lights — 4 bands at different heights
-  [30, 65, 105, 155].forEach((hy, idx) => {
-    const stripMat = new THREE.MeshStandardMaterial({
-      color: idx === 3 ? 0xffffff : 0x00ccff,
-      emissive: idx === 3 ? 0xaaccff : 0x0088cc,
-      emissiveIntensity: idx === 3 ? 1.2 : 0.6,
-      roughness: 0.1, metalness: 0.0
-    });
-    const strip = new THREE.Mesh(
-      new THREE.CylinderGeometry(r - 1, r - 1, idx === 3 ? 6 : 2, 80, 1, true),
-      stripMat
-    );
-    strip.position.y = hy;
-    scene.add(strip);
-    _arenaObjs.push(strip);
-  });
+  // Second rim band (inner, narrower)
+  const rimInner = new THREE.Mesh(
+    new THREE.TorusGeometry(r - 18, 2, 6, 100),
+    new THREE.MeshStandardMaterial({
+      color: 0x00ccff, emissive: 0x00ccff, emissiveIntensity: 2.5,
+      roughness: 0.0, metalness: 0.0
+    })
+  );
+  rimInner.rotation.x = Math.PI / 2;
+  rimInner.position.y = 0.5;
+  scene.add(rimInner);
+  _arenaObjs.push(rimInner);
 
-  // ── Outer structure wall (enclosing the whole venue) ──────────────────────
-  const OUTER_R  = r * 2.1;
-  const VENUE_H  = 420;
+  // ── Outer structure wall (venue boundary) ─────────────────────────────────
+  const OUTER_R = r * 2.2;
+  const VENUE_H = 500;
 
   const outerWall = new THREE.Mesh(
     new THREE.CylinderGeometry(OUTER_R, OUTER_R, VENUE_H, 80, 1, true),
     new THREE.MeshStandardMaterial({
-      color: 0x010810, roughness: 0.8, metalness: 0.3, side: THREE.BackSide
+      color: 0x000408, roughness: 0.95, metalness: 0.3, side: THREE.BackSide
     })
   );
-  outerWall.position.y = VENUE_H / 2 - 80;
+  outerWall.position.y = VENUE_H / 2 - 100;
   scene.add(outerWall);
   _arenaObjs.push(outerWall);
 
-  // Outer wall horizontal accent strips
-  [40, 100, 180, 260].forEach(hy => {
+  // Subtle circuit-line accents on outer wall
+  [60, 150, 250].forEach(hy => {
     const s = new THREE.Mesh(
-      new THREE.CylinderGeometry(OUTER_R - 1, OUTER_R - 1, 1.5, 80, 1, true),
-      new THREE.MeshBasicMaterial({ color: 0x003355, transparent: true, opacity: 0.9 })
+      new THREE.CylinderGeometry(OUTER_R - 1, OUTER_R - 1, 1, 80, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x002244, transparent: true, opacity: 0.7 })
     );
-    s.position.y = hy - 80;
-    scene.add(s);
-    _arenaObjs.push(s);
+    s.position.y = hy - 100;
+    scene.add(s); _arenaObjs.push(s);
   });
 
-  // ── Tiered spectator stands ───────────────────────────────────────────────
+  // ── Tiered spectator stands ────────────────────────────────────────────────
   const TIERS = [
-    { r0: r + 20,  r1: r + 90,  y: -20,  h: 60  },
-    { r0: r + 80,  r1: r + 180, y: 20,   h: 100 },
-    { r0: r + 170, r1: r + 320, y: 90,   h: 180 },
-    { r0: r + 300, r1: OUTER_R, y: 200,  h: 140 },
+    { r0: r + 22,  r1: r + 120, y: -30,  h: 80  },
+    { r0: r + 110, r1: r + 250, y: 30,   h: 140 },
+    { r0: r + 240, r1: r + 420, y: 110,  h: 200 },
+    { r0: r + 410, r1: OUTER_R, y: 220,  h: 160 },
   ];
-  const standMat = new THREE.MeshStandardMaterial({
-    color: 0x000a14, roughness: 0.9, metalness: 0.2
-  });
+  const standMat = new THREE.MeshStandardMaterial({ color: 0x000408, roughness: 0.95, metalness: 0.15 });
   TIERS.forEach(({ r0, r1, y, h }) => {
-    const geo = new THREE.CylinderGeometry(r1, r1, h, 64, 1, true);
-    const m   = new THREE.Mesh(geo, standMat);
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r1, r1, h, 64, 1, true), standMat);
     m.position.y = y;
-    scene.add(m);
-    _arenaObjs.push(m);
-
-    // tier floor ring (top face of stands)
-    const tierFloor = new THREE.Mesh(
+    scene.add(m); _arenaObjs.push(m);
+    const tf = new THREE.Mesh(
       new THREE.RingGeometry(r0, r1, 64),
-      new THREE.MeshStandardMaterial({ color: 0x00060f, roughness: 0.95, metalness: 0.1 })
+      new THREE.MeshStandardMaterial({ color: 0x000305, roughness: 0.98, metalness: 0.05 })
     );
-    tierFloor.rotation.x = -Math.PI / 2;
-    tierFloor.position.y = y + h / 2;
-    scene.add(tierFloor);
-    _arenaObjs.push(tierFloor);
+    tf.rotation.x = -Math.PI / 2;
+    tf.position.y = y + h / 2;
+    scene.add(tf); _arenaObjs.push(tf);
   });
 
-  // ── Crowd particle field (thousands of spectator lights) ──────────────────
-  const CROWD_COUNT = 3200;
-  const positions   = new Float32Array(CROWD_COUNT * 3);
-  const colors      = new Float32Array(CROWD_COUNT * 3);
-  let ci = 0;
-  for (let i = 0; i < CROWD_COUNT; i++) {
-    const angle  = Math.random() * Math.PI * 2;
-    const tier   = TIERS[Math.floor(Math.random() * TIERS.length)];
-    const cr     = tier.r0 + Math.random() * (tier.r1 - tier.r0);
-    const cy2    = tier.y + tier.h / 2 + Math.random() * 30;
-    positions[ci]     = Math.cos(angle) * cr;
-    positions[ci + 1] = cy2;
-    positions[ci + 2] = Math.sin(angle) * cr;
-    // Mostly white/blue crowd lights, occasional warm
-    const warm = Math.random() < 0.08;
-    colors[ci]     = warm ? 1.0 : 0.7 + Math.random() * 0.3;
-    colors[ci + 1] = warm ? 0.6 : 0.85 + Math.random() * 0.15;
-    colors[ci + 2] = warm ? 0.2 : 1.0;
-    ci += 3;
+  // ── Crowd particle field ───────────────────────────────────────────────────
+  const CROWD = _mob ? 1500 : 4000;
+  const cpos = new Float32Array(CROWD * 3), ccol = new Float32Array(CROWD * 3);
+  for (let i = 0, ci = 0; i < CROWD; i++, ci += 3) {
+    const a = Math.random() * Math.PI * 2;
+    const t = TIERS[Math.floor(Math.random() * TIERS.length)];
+    const cr = t.r0 + Math.random() * (t.r1 - t.r0);
+    const cy = t.y + t.h / 2 + Math.random() * 40;
+    cpos[ci] = Math.cos(a) * cr; cpos[ci+1] = cy; cpos[ci+2] = Math.sin(a) * cr;
+    const warm = Math.random() < 0.07;
+    ccol[ci]   = warm ? 1.0 : 0.6 + Math.random() * 0.4;
+    ccol[ci+1] = warm ? 0.5 : 0.8 + Math.random() * 0.2;
+    ccol[ci+2] = warm ? 0.1 : 1.0;
   }
-  const crowdGeo = new THREE.BufferGeometry();
-  crowdGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  crowdGeo.setAttribute('color',    new THREE.BufferAttribute(colors, 3));
-  const crowd = new THREE.Points(
-    crowdGeo,
-    new THREE.PointsMaterial({ size: 2.8, vertexColors: true, sizeAttenuation: true })
-  );
-  scene.add(crowd);
-  _arenaObjs.push(crowd);
+  const cg = new THREE.BufferGeometry();
+  cg.setAttribute('position', new THREE.BufferAttribute(cpos, 3));
+  cg.setAttribute('color',    new THREE.BufferAttribute(ccol, 3));
+  const crowd = new THREE.Points(cg, new THREE.PointsMaterial({ size: 2.6, vertexColors: true, sizeAttenuation: true }));
+  scene.add(crowd); _arenaObjs.push(crowd);
 
-  // ── Venue ceiling ─────────────────────────────────────────────────────────
+  // ── Venue ceiling ──────────────────────────────────────────────────────────
   const ceiling = new THREE.Mesh(
     new THREE.CircleGeometry(OUTER_R, 80),
-    new THREE.MeshStandardMaterial({ color: 0x000810, roughness: 0.9, metalness: 0.5 })
+    new THREE.MeshStandardMaterial({ color: 0x000508, roughness: 0.95, metalness: 0.4 })
   );
   ceiling.rotation.x = Math.PI / 2;
-  ceiling.position.y = VENUE_H - 80;
-  scene.add(ceiling);
-  _arenaObjs.push(ceiling);
+  ceiling.position.y = VENUE_H - 100;
+  scene.add(ceiling); _arenaObjs.push(ceiling);
 
-  // ── THE BIG RING — iconic TRON disc wars ring at apex ────────────────────
-  const BIG_RING_R = r * 1.35;
-  const BIG_RING_Y = 200;
+  // ── THE BIG RING — iconic TRON scoreboard ring ────────────────────────────
+  const BIG_RING_R = r * 1.38;
+  const BIG_RING_Y = 210;
 
-  // Outer dark structural torus
+  // Structural dark torus
   const bigRingOuter = new THREE.Mesh(
-    new THREE.TorusGeometry(BIG_RING_R, 18, 16, 120),
-    new THREE.MeshStandardMaterial({
-      color: 0x001428, roughness: 0.4, metalness: 0.95
-    })
+    new THREE.TorusGeometry(BIG_RING_R, 22, 20, 120),
+    new THREE.MeshStandardMaterial({ color: 0x000e1c, roughness: 0.3, metalness: 0.98 })
   );
   bigRingOuter.rotation.x = Math.PI / 2;
   bigRingOuter.position.y = BIG_RING_Y;
-  scene.add(bigRingOuter);
-  _arenaObjs.push(bigRingOuter);
+  scene.add(bigRingOuter); _arenaObjs.push(bigRingOuter);
 
-  // Bright inner emission face — the glowing white ring in the movie
+  // Glowing inner face
   const bigRingGlow = new THREE.Mesh(
-    new THREE.TorusGeometry(BIG_RING_R, 8, 12, 120),
+    new THREE.TorusGeometry(BIG_RING_R, 9, 14, 120),
     new THREE.MeshStandardMaterial({
-      color: 0xffffff, emissive: 0xddeeff, emissiveIntensity: 2.0,
+      color: 0xffffff, emissive: 0xd0eeff, emissiveIntensity: 2.5,
       roughness: 0.0, metalness: 0.0
     })
   );
   bigRingGlow.rotation.x = Math.PI / 2;
   bigRingGlow.position.y = BIG_RING_Y;
-  scene.add(bigRingGlow);
-  _arenaObjs.push(bigRingGlow);
+  scene.add(bigRingGlow); _arenaObjs.push(bigRingGlow);
 
-  // Secondary inner ring slightly smaller
+  // Inner accent ring
   const bigRingInner = new THREE.Mesh(
-    new THREE.TorusGeometry(BIG_RING_R * 0.86, 4, 8, 100),
-    new THREE.MeshStandardMaterial({
-      color: 0x88bbff, emissive: 0x6699ff, emissiveIntensity: 1.0,
-      roughness: 0.0, metalness: 0.0
-    })
+    new THREE.TorusGeometry(BIG_RING_R * 0.84, 3.5, 8, 100),
+    new THREE.MeshStandardMaterial({ color: 0x88bbff, emissive: 0x4488ff, emissiveIntensity: 1.2, roughness: 0, metalness: 0 })
   );
   bigRingInner.rotation.x = Math.PI / 2;
-  bigRingInner.position.y = BIG_RING_Y - 2;
-  scene.add(bigRingInner);
-  _arenaObjs.push(bigRingInner);
+  bigRingInner.position.y = BIG_RING_Y - 3;
+  scene.add(bigRingInner); _arenaObjs.push(bigRingInner);
 
-  // Point light riding the big ring — gives it that "halo" lit-from-above feel
-  const ringLight = new THREE.PointLight(0xaaccff, 1.2, r * 3);
+  // Scoreboard panels hanging from ring (8 evenly spaced flat panels)
+  for (let i = 0; i < 8; i++) {
+    const pa = (i / 8) * Math.PI * 2;
+    const px = Math.cos(pa) * BIG_RING_R;
+    const pz = Math.sin(pa) * BIG_RING_R;
+    const panel = new THREE.Mesh(
+      new THREE.BoxGeometry(60, 18, 3),
+      new THREE.MeshStandardMaterial({
+        color: 0x001122, emissive: 0x003366, emissiveIntensity: 0.8,
+        roughness: 0.5, metalness: 0.6
+      })
+    );
+    panel.position.set(px, BIG_RING_Y - 30, pz);
+    panel.rotation.y = pa + Math.PI / 2;
+    scene.add(panel); _arenaObjs.push(panel);
+    // Panel border glow
+    const border = new THREE.Mesh(
+      new THREE.BoxGeometry(62, 20, 1),
+      new THREE.MeshStandardMaterial({ color: 0x00aaff, emissive: 0x0066cc, emissiveIntensity: 1.0, roughness: 0, metalness: 0 })
+    );
+    border.position.copy(panel.position);
+    border.rotation.copy(panel.rotation);
+    border.position.y -= 0.5;
+    scene.add(border); _arenaObjs.push(border);
+  }
+
+  // Ring halo light
+  const ringLight = new THREE.PointLight(0x88aadd, 0.9, r * 3.5);
   ringLight.position.set(0, BIG_RING_Y, 0);
-  scene.add(ringLight);
-  _arenaObjs.push(ringLight);
+  scene.add(ringLight); _arenaObjs.push(ringLight);
 
-  // ── Overhead combat spotlights + volumetric god ray shafts ───────────────
-  const SPOT_H = BIG_RING_Y - 10;
+  // ── Overhead spotlights + god rays ────────────────────────────────────────
+  const SPOT_H = BIG_RING_Y - 15;
   const godRayMat = new THREE.MeshBasicMaterial({
-    color: 0x8ab8ff, transparent: true, opacity: 0.055,
+    color: 0x6699cc, transparent: true, opacity: 0.04,
     depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
   });
 
   for (let i = 0; i < 4; i++) {
     const sa = (i / 4) * Math.PI * 2;
-    const sx = Math.cos(sa) * r * 0.55;
-    const sz = Math.sin(sa) * r * 0.55;
-
-    // SpotLight
-    const spot = new THREE.SpotLight(0xcce0ff, 1.0, SPOT_H * 2.2, Math.PI / 10, 0.35, 1.2);
+    const sx = Math.cos(sa) * r * 0.5, sz = Math.sin(sa) * r * 0.5;
+    const spot = new THREE.SpotLight(0xbbddff, 0.8, SPOT_H * 2.5, Math.PI / 11, 0.4, 1.4);
     spot.position.set(sx, SPOT_H, sz);
-    spot.target.position.set(-sx * 0.3, 0, -sz * 0.3);
+    spot.target.position.set(-sx * 0.2, 0, -sz * 0.2);
     spot.castShadow = (i === 0);
     if (i === 0) { spot.shadow.mapSize.set(1024, 1024); spot.shadow.bias = -0.001; }
     scene.add(spot); scene.add(spot.target);
     _arenaObjs.push(spot); _arenaObjs.push(spot.target);
 
-    // God ray shaft — tapered cone from lamp down to floor
     const rayH = SPOT_H;
-    const rayR = rayH * Math.tan(Math.PI / 10) * 0.9;
+    const rayR = rayH * Math.tan(Math.PI / 11) * 0.9;
     const ray = new THREE.Mesh(new THREE.ConeGeometry(rayR, rayH, 10, 1, true), godRayMat);
-    ray.position.set(sx * 0.85, SPOT_H / 2, sz * 0.85);
-    scene.add(ray);
-    _arenaObjs.push(ray);
-
-    // Tight bright core ray
-    const core = new THREE.Mesh(
-      new THREE.ConeGeometry(rayR * 0.18, rayH, 6, 1, true),
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff, transparent: true, opacity: 0.03,
-        depthWrite: false, blending: THREE.AdditiveBlending
-      })
-    );
-    core.position.copy(ray.position);
-    scene.add(core);
-    _arenaObjs.push(core);
+    ray.position.set(sx * 0.8, SPOT_H / 2, sz * 0.8);
+    scene.add(ray); _arenaObjs.push(ray);
   }
 
-  // Soft fill from below rim (makes floor reflect)
-  const floorFill = new THREE.PointLight(0x003355, 0.6, r * 1.8);
-  floorFill.position.set(0, 20, 0);
-  scene.add(floorFill);
-  _arenaObjs.push(floorFill);
+  // ── Sub-platform cyan under-glow ──────────────────────────────────────────
+  const floorFill = new THREE.PointLight(0x00aaff, 1.8, r * 2.2);
+  floorFill.position.set(0, -30, 0);
+  scene.add(floorFill); _arenaObjs.push(floorFill);
 
-  // Atmospheric haze — very faint additive sphere fills the interior
-  const hazeMat = new THREE.MeshBasicMaterial({
-    color: 0x112233, transparent: true, opacity: 0.04,
-    depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.BackSide
+  const platformGlow = new THREE.PointLight(0x00ddff, 1.2, r * 1.4);
+  platformGlow.position.set(0, 15, 0);
+  scene.add(platformGlow); _arenaObjs.push(platformGlow);
+
+  // ── VOLUMETRIC SMOKE CLOUD particles around platform ─────────────────────
+  const SMOKE_COUNT = _mob ? 500 : 1200;
+  const smokePos = new Float32Array(SMOKE_COUNT * 3);
+  const smokeAlpha = new Float32Array(SMOKE_COUNT);
+  _smokeVels = new Float32Array(SMOKE_COUNT * 3);
+
+  for (let i = 0, ci = 0; i < SMOKE_COUNT; i++, ci += 3) {
+    const a = Math.random() * Math.PI * 2;
+    const radSpread = r * 0.55 + Math.random() * r * 1.1;
+    const hgt = -40 + Math.random() * 260;
+    smokePos[ci]   = Math.cos(a) * radSpread;
+    smokePos[ci+1] = hgt;
+    smokePos[ci+2] = Math.sin(a) * radSpread;
+    _smokeVels[ci]   = (Math.random() - 0.5) * 0.08;
+    _smokeVels[ci+1] = 0.04 + Math.random() * 0.06;
+    _smokeVels[ci+2] = (Math.random() - 0.5) * 0.08;
+    smokeAlpha[i] = Math.random();
+  }
+  const smokeGeo = new THREE.BufferGeometry();
+  smokeGeo.setAttribute('position', new THREE.BufferAttribute(smokePos, 3));
+  const smokeMat = new THREE.PointsMaterial({
+    color: 0x1a3a4a,
+    size: 90,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 0.18,
+    depthWrite: false,
+    blending: THREE.NormalBlending
   });
-  const haze = new THREE.Mesh(new THREE.SphereGeometry(r * 0.9, 16, 10), hazeMat);
-  haze.position.y = 100;
-  scene.add(haze);
-  _arenaObjs.push(haze);
+  _smokeParts = new THREE.Points(smokeGeo, smokeMat);
+  scene.add(_smokeParts);
+  _arenaObjs.push(_smokeParts);
+
+  // Second bright smoke layer (additive, cyan tinted, near platform edge)
+  const SMOKE2 = _mob ? 150 : 400;
+  const s2pos = new Float32Array(SMOKE2 * 3);
+  for (let i = 0, ci = 0; i < SMOKE2; i++, ci += 3) {
+    const a = Math.random() * Math.PI * 2;
+    const ro = r * 0.85 + Math.random() * r * 0.6;
+    s2pos[ci]   = Math.cos(a) * ro;
+    s2pos[ci+1] = -20 + Math.random() * 140;
+    s2pos[ci+2] = Math.sin(a) * ro;
+  }
+  const s2geo = new THREE.BufferGeometry();
+  s2geo.setAttribute('position', new THREE.BufferAttribute(s2pos, 3));
+  const smoke2 = new THREE.Points(s2geo, new THREE.PointsMaterial({
+    color: 0x004466, size: 55, sizeAttenuation: true,
+    transparent: true, opacity: 0.12,
+    depthWrite: false, blending: THREE.AdditiveBlending
+  }));
+  scene.add(smoke2); _arenaObjs.push(smoke2);
 }
 
 // ── Tile map ───────────────────────────────────────────────────────────────
@@ -767,6 +805,120 @@ function setupInput() {
   });
 }
 
+// ── Mobile virtual controls ────────────────────────────────────────────────
+const mobileAxes = { x: 0, y: 0 };
+let _isTouchDevice = false;
+
+function setupMobileControls() {
+  _isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  const mc = document.getElementById('mobileControls');
+  if (!_isTouchDevice) return;
+  mc.classList.add('active');
+  document.getElementById('lockMsg').style.display = 'none';
+
+  const joyZone = document.getElementById('joyZone');
+  const joyKnob = document.getElementById('joyKnob');
+  const lookZone = document.getElementById('lookZone');
+  const lookRipple = document.getElementById('lookRipple');
+  const JOY_R = 45;
+  let joyId = null, joyOriginX = 0, joyOriginY = 0;
+  let lookId = null, lookLastX = 0, lookLastY = 0;
+
+  joyZone.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    joyId = t.identifier;
+    const rect = joyZone.getBoundingClientRect();
+    joyOriginX = t.clientX - rect.left;
+    joyOriginY = t.clientY - rect.top;
+  }, { passive: false });
+
+  joyZone.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier !== joyId) continue;
+      const rect = joyZone.getBoundingClientRect();
+      let dx = t.clientX - rect.left - joyOriginX;
+      let dy = t.clientY - rect.top  - joyOriginY;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist > JOY_R) { dx = dx/dist*JOY_R; dy = dy/dist*JOY_R; }
+      joyKnob.style.left = (45 + dx) + 'px';
+      joyKnob.style.top  = (45 + dy) + 'px';
+      mobileAxes.x = dx / JOY_R;
+      mobileAxes.y = dy / JOY_R;
+    }
+  }, { passive: false });
+
+  const endJoy = e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier !== joyId) continue;
+      joyId = null;
+      joyKnob.style.left = '45px'; joyKnob.style.top = '45px';
+      mobileAxes.x = 0; mobileAxes.y = 0;
+    }
+  };
+  joyZone.addEventListener('touchend', endJoy);
+  joyZone.addEventListener('touchcancel', endJoy);
+
+  // Look zone — drag to rotate camera
+  lookZone.addEventListener('touchstart', e => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    if (lookId !== null) return;
+    lookId = t.identifier;
+    lookLastX = t.clientX; lookLastY = t.clientY;
+    lookRipple.style.display = 'block';
+    lookRipple.style.left = t.clientX + 'px';
+    lookRipple.style.top  = t.clientY + 'px';
+  }, { passive: false });
+
+  lookZone.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches) {
+      if (t.identifier !== lookId) continue;
+      const dx = t.clientX - lookLastX;
+      const dy = t.clientY - lookLastY;
+      lookLastX = t.clientX; lookLastY = t.clientY;
+      const sens = 0.005;
+      yaw   -= dx * sens;
+      pitch -= dy * sens;
+      pitch  = Math.max(-0.55, Math.min(0.55, pitch));
+      myFacingX = -Math.sin(yaw);
+      myFacingZ = -Math.cos(yaw);
+      socket.emit('setFacing', { fx: myFacingX, fy: myFacingZ });
+      lookRipple.style.left = t.clientX + 'px';
+      lookRipple.style.top  = t.clientY + 'px';
+    }
+  }, { passive: false });
+
+  const endLook = e => {
+    for (const t of e.changedTouches) {
+      if (t.identifier !== lookId) continue;
+      lookId = null;
+      lookRipple.style.display = 'none';
+    }
+  };
+  lookZone.addEventListener('touchend', endLook);
+  lookZone.addEventListener('touchcancel', endLook);
+
+  // Action buttons
+  document.getElementById('btnThrow').addEventListener('touchstart', e => {
+    e.preventDefault(); doThrowDisc();
+  }, { passive: false });
+
+  document.getElementById('btnDodge').addEventListener('touchstart', e => {
+    e.preventDefault();
+    socket.emit('dodge'); Audio.dodge();
+  }, { passive: false });
+
+  const blockBtn = document.getElementById('btnBlock');
+  blockBtn.addEventListener('touchstart', e => {
+    e.preventDefault(); socket.emit('blockStart');
+  }, { passive: false });
+  blockBtn.addEventListener('touchend',   e => { e.preventDefault(); socket.emit('blockEnd'); }, { passive: false });
+  blockBtn.addEventListener('touchcancel',e => { e.preventDefault(); socket.emit('blockEnd'); }, { passive: false });
+}
+
 function sendInput() {
   if (!myId) return;
   if (gamePhase !== 'playing' && gamePhase !== 'finalBattle') return;
@@ -779,6 +931,11 @@ function sendInput() {
   if (keys['s'] || keys['arrowdown'])               { vx -= fwX; vy -= fwZ; }
   if (keys['a'] || keys['arrowleft']  || keys['q']) { vx -= stX; vy -= stZ; }
   if (keys['d'] || keys['arrowright'] || keys['e']) { vx += stX; vy += stZ; }
+  // Mobile joystick — y axis = forward/backward, x axis = strafe
+  if (mobileAxes.x !== 0 || mobileAxes.y !== 0) {
+    vx += fwX * (-mobileAxes.y) + stX * mobileAxes.x;
+    vy += fwZ * (-mobileAxes.y) + stZ * mobileAxes.x;
+  }
 
   const l = Math.sqrt(vx * vx + vy * vy);
   if (l > 0) { vx /= l; vy /= l; }
@@ -881,14 +1038,14 @@ function gameLoop(ts) {
   if (composer) composer.render(); else renderer.render(scene, camera);
 }
 
-// Animate emissive neon — subtle breathing + occasional flicker
+// Animate emissive neon — breathing, flicker, and smoke drift
 function animateArena(ts) {
   const t = ts * 0.001;
   // Rim slow pulse
   if (rimMesh && rimMesh.material.emissive) {
-    rimMesh.material.emissiveIntensity = 2.2 + 0.6 * Math.sin(t * 1.1);
+    rimMesh.material.emissiveIntensity = 3.0 + 0.8 * Math.sin(t * 1.1);
   }
-  // Occasional neon flicker on wall strips
+  // Occasional neon flicker
   if (_arenaObjs.length && Math.random() < 0.004) {
     const strips = _arenaObjs.filter(o => o.isMesh && o.material && o.material.emissive);
     if (strips.length) {
@@ -897,6 +1054,28 @@ function animateArena(ts) {
       s.material.emissiveIntensity = base * (0.3 + Math.random() * 0.4);
       setTimeout(() => { if (s.material) s.material.emissiveIntensity = base; }, 60 + Math.random() * 80);
     }
+  }
+  // Animate smoke particles
+  if (_smokeParts && _smokeVels) {
+    const pos = _smokeParts.geometry.attributes.position;
+    const n = pos.count;
+    const r = arenaInfo.radius || 480;
+    for (let i = 0, ci = 0; i < n; i++, ci += 3) {
+      pos.array[ci]   += _smokeVels[ci];
+      pos.array[ci+1] += _smokeVels[ci+1];
+      pos.array[ci+2] += _smokeVels[ci+2];
+      // reset if too high or too far
+      if (pos.array[ci+1] > 280 || Math.sqrt(pos.array[ci]*pos.array[ci]+pos.array[ci+2]*pos.array[ci+2]) > r * 1.8) {
+        const a = Math.random() * Math.PI * 2;
+        const ro = r * 0.55 + Math.random() * r * 1.0;
+        pos.array[ci]   = Math.cos(a) * ro;
+        pos.array[ci+1] = -30 + Math.random() * 40;
+        pos.array[ci+2] = Math.sin(a) * ro;
+      }
+    }
+    pos.needsUpdate = true;
+    // Slowly rotate the whole smoke field
+    _smokeParts.rotation.y += 0.0003;
   }
 }
 

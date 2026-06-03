@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
   <title>DISC WARS</title>
   <link rel="stylesheet" href="style.css"/>
   <script src="three.min.js"></script>
@@ -34,6 +37,82 @@
       transition: opacity 0.5s; pointer-events: none; z-index: 50;
     }
     #gravIndicator.visible { opacity: 1; }
+
+    /* ── MOBILE CONTROLS ─────────────────────────────────────────────── */
+    #mobileControls {
+      display: none;
+      position: absolute; inset: 0;
+      pointer-events: none; z-index: 60;
+    }
+    #mobileControls.active { display: block; }
+
+    /* Left joystick zone */
+    #joyZone {
+      position: absolute; left: 20px; bottom: 20px;
+      width: 140px; height: 140px;
+      pointer-events: all;
+    }
+    #joyBase {
+      position: absolute; inset: 0;
+      border-radius: 50%;
+      background: rgba(0,247,255,0.08);
+      border: 2px solid rgba(0,247,255,0.3);
+    }
+    #joyKnob {
+      position: absolute; left: 45px; top: 45px;
+      width: 50px; height: 50px;
+      border-radius: 50%;
+      background: rgba(0,247,255,0.35);
+      border: 2px solid rgba(0,247,255,0.8);
+      box-shadow: 0 0 12px rgba(0,247,255,0.5);
+    }
+
+    /* Look zone (right side drag) */
+    #lookZone {
+      position: absolute; right: 0; top: 0;
+      width: 55%; height: 100%;
+      pointer-events: all;
+    }
+
+    /* Action buttons */
+    .mob-btn {
+      position: absolute;
+      pointer-events: all;
+      background: rgba(0,247,255,0.1);
+      border: 2px solid rgba(0,247,255,0.5);
+      color: rgba(0,247,255,0.9);
+      font-family: 'Courier New', monospace;
+      font-size: .65rem; letter-spacing: .1em;
+      border-radius: 50%;
+      width: 64px; height: 64px;
+      display: flex; align-items: center; justify-content: center;
+      text-align: center;
+      box-shadow: 0 0 10px rgba(0,247,255,0.3);
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .mob-btn:active { background: rgba(0,247,255,0.3); }
+
+    #btnThrow  { right: 24px;  bottom: 110px; }
+    #btnDodge  { right: 104px; bottom: 44px;  }
+    #btnBlock  { right: 24px;  bottom: 44px;
+      background: rgba(255,102,0,0.12);
+      border-color: rgba(255,102,0,0.5);
+      color: rgba(255,102,0,0.9);
+      box-shadow: 0 0 10px rgba(255,102,0,0.3);
+    }
+    #btnBlock:active { background: rgba(255,102,0,0.35); }
+
+    /* Look ripple indicator */
+    #lookRipple {
+      position: absolute;
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      border: 1px solid rgba(0,247,255,0.25);
+      pointer-events: none;
+      transform: translate(-50%,-50%);
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -130,6 +209,19 @@
 
     <!-- Kill feed -->
     <div id="killFeed"></div>
+
+    <!-- Mobile controls -->
+    <div id="mobileControls">
+      <div id="joyZone">
+        <div id="joyBase"></div>
+        <div id="joyKnob"></div>
+      </div>
+      <div id="lookZone"></div>
+      <div id="lookRipple"></div>
+      <button class="mob-btn" id="btnThrow">THROW</button>
+      <button class="mob-btn" id="btnDodge">DODGE</button>
+      <button class="mob-btn" id="btnBlock">BLOCK</button>
+    </div>
   </div>
 
   <script src="/socket.io/socket.io.js"></script>

@@ -306,3 +306,17 @@ input:focus { box-shadow: 0 0 8px var(--cyan); }
   70%  { opacity:1; }
   100% { opacity:0; }
 }
+
+/* ── PHONE / SMALL SCREEN ────────────────────────────────── */
+@media (max-width: 600px) {
+  .logo-text  { font-size: 3rem; }
+  .logo-sub   { font-size: .85rem; }
+  .lobby-panel { min-width: 90vw; padding: 18px 20px; }
+  .controls-guide { display: none; }
+  .tron-btn   { font-size: .85rem; padding: 10px 16px; }
+  .room-code  { font-size: 1.2rem; }
+  .hud-player { min-width: 80px; font-size: .62rem; }
+  .hud-name   { font-size: .7rem; }
+  .kill-entry { font-size: .65rem; }
+  #hudCenter  { font-size: .62rem; }
+}
