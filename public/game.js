@@ -74,15 +74,12 @@ function hexToWorld3(q, r) {
 // ── Init Three.js ─────────────────────────────────────────────────────────
 function initThree() {
   const canvas = document.getElementById('gameCanvas');
-  renderer = new THREE.WebGLRenderer({
-    canvas, antialias: false, // SMAA handles AA instead
-    powerPreference: 'high-performance'
-  });
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.75;
+  renderer.toneMappingExposure = 0.9;
   renderer.outputEncoding = THREE.sRGBEncoding;
 
   scene = new THREE.Scene();
@@ -92,18 +89,15 @@ function initThree() {
   camera = new THREE.PerspectiveCamera(68, 1, 0.5, 4000);
   camera.rotation.order = 'YXZ';
 
-  // Build env map from RoomEnvironment for real metallic reflections
+  // HDR environment map — real reflections on all metallic surfaces
   const { RoomEnvironment } = window.PP;
   const pmrem = new THREE.PMREMGenerator(renderer);
   pmrem.compileEquirectangularShader();
-  const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.environment = envTex;
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   pmrem.dispose();
 
-  // Very dim ambient — all light comes from arena fixtures + env map
   scene.add(new THREE.AmbientLight(0x020408, 0.8));
 
-  // Single shadow-casting directional (key light from above)
   const dir = new THREE.DirectionalLight(0x7799bb, 0.3);
   dir.position.set(80, 500, 120);
   dir.castShadow = true;
@@ -123,39 +117,24 @@ function initThree() {
 }
 
 function setupPostProcessing() {
-  const {
-    EffectComposer, RenderPass, UnrealBloomPass,
-    SSAOPass, SMAAPass, FilmPass, ShaderPass, VignetteShader
-  } = window.PP;
-
+  const { EffectComposer, RenderPass, UnrealBloomPass, SSAOPass, SMAAPass, FilmPass, ShaderPass, VignetteShader } = window.PP;
   const w = window.innerWidth, h = window.innerHeight;
   composer = new EffectComposer(renderer);
-
-  // 1. Main scene render
   composer.addPass(new RenderPass(scene, camera));
 
-  // 2. SSAO — ambient occlusion makes everything look 3D and grounded
   const ssao = new SSAOPass(scene, camera, w, h);
-  ssao.kernelRadius = 24;
-  ssao.minDistance  = 0.001;
-  ssao.maxDistance  = 0.06;
+  ssao.kernelRadius = 24; ssao.minDistance = 0.001; ssao.maxDistance = 0.06;
   composer.addPass(ssao);
 
-  // 3. HDR Bloom — emissive neon glow
-  const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 1.1, 0.5, 0.22);
-  composer.addPass(bloom);
-
-  // 4. SMAA anti-aliasing — sharp edges, no jaggies
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 1.1, 0.5, 0.18));
   composer.addPass(new SMAAPass(w, h));
 
-  // 5. Film grain — cinematic texture
-  const film = new FilmPass(0.28, 0.0, 648, false);
+  const film = new FilmPass(0.25, 0.0, 648, false);
   composer.addPass(film);
 
-  // 6. Vignette — darkens edges, focuses eye on centre
   const vignette = new ShaderPass(VignetteShader);
   vignette.uniforms['offset'].value = 0.85;
-  vignette.uniforms['darkness'].value = 1.6;
+  vignette.uniforms['darkness'].value = 1.5;
   composer.addPass(vignette);
 }
 
