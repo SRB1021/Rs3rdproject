@@ -149,7 +149,7 @@ const Audio = (() => {
     [1,3].forEach(b=>{
       const st=t+b*BEAT;
       noiseHit(vol*0.42, comp, st, 0.16, 8000);
-      osc('triangle', 190, vol*0.28, comp, st, 0.12, 0.003);
+      osc('sine', 190, vol*0.28, comp, st, 0.12, 0.003);
       // rim shot click
       noiseHit(vol*0.18, hpf(5000, comp), st+0.002, 0.04);
     });
@@ -171,26 +171,26 @@ const Audio = (() => {
     for(let s=0;s<16;s++){
       const freq=BASS[s]; if(!freq) continue;
       const bt=t+s*S16;
-      osc('triangle', freq,     vol*0.55, bassChain, bt, S16*0.72, 0.006);
+      osc('sine', freq,     vol*0.55, bassChain, bt, S16*0.72, 0.006);
       osc('sine',     freq*0.5, vol*0.65, comp,      bt, S16*0.85, 0.004); // sub
       // slight detune for fatness
-      osc('triangle', freq*1.007, vol*0.18, bassChain, bt, S16*0.65, 0.008);
+      osc('sine', freq*1.007, vol*0.18, bassChain, bt, S16*0.65, 0.008);
     }
 
     // ── "End of Line" hook riff ───────────────────────────────────────
     for(let s=0;s<16;s++){
       const freq=HOOK[s]; if(!freq) continue;
       const ht=t+s*S16;
-      osc('triangle', freq,     vol*(isFinal?0.16:0.11), leadChain,   ht, S16*0.65, 0.005);
-      osc('triangle', freq*0.5, vol*(isFinal?0.07:0.04), rev.input,   ht, S16*0.8,  0.008);
+      osc('sine', freq,     vol*(isFinal?0.16:0.11), leadChain,   ht, S16*0.65, 0.005);
+      osc('sine', freq*0.5, vol*(isFinal?0.07:0.04), rev.input,   ht, S16*0.8,  0.008);
     }
 
     // ── Chord stabs (dark minor) ──────────────────────────────────────
     STABS.forEach(([beat, notes])=>{
       const st=t+beat*BEAT;
       notes.forEach(f=>{
-        osc('triangle', f, vol*0.12, rev.input, st, BEAT*0.18, 0.01);
-        osc('triangle', f, vol*0.05, comp,      st, BEAT*0.10, 0.005);
+        osc('sine', f, vol*0.12, rev.input, st, BEAT*0.18, 0.01);
+        osc('sine', f, vol*0.05, comp,      st, BEAT*0.10, 0.005);
       });
     });
 
@@ -214,7 +214,7 @@ const Audio = (() => {
       const fHook=[C5,0,Bb4,Ab4, G4,0,Ab4,0, Bb4,0,C5,0, G4,0,0,0];
       for(let s=0;s<16;s++){
         const freq=fHook[s]; if(!freq) continue;
-        osc('triangle',freq,0.22,distort(comp),t+s*S16,S16*0.6,0.005);
+        osc('sine',freq,0.22,distort(comp),t+s*S16,S16*0.6,0.005);
       }
     }
   }
@@ -273,7 +273,7 @@ const Audio = (() => {
     // "DISC" formants
     [[820,0.08],[1200,0.045],[2500,0.02]].forEach(([f,a])=>{
       const o=ctx.createOscillator(),g=ctx.createGain();
-      o.type='triangle'; o.frequency.value=f*(0.97+Math.random()*0.06);
+      o.type='sine'; o.frequency.value=f*(0.97+Math.random()*0.06);
       g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(a,t+0.04);
       g.gain.exponentialRampToValueAtTime(0.0001,t+0.3);
       o.connect(g); g.connect(sfxBus); o.start(t); o.stop(t+0.35);
@@ -282,7 +282,7 @@ const Audio = (() => {
     const t2=t+0.44;
     [[600,0.10],[1000,0.06],[2000,0.025]].forEach(([f,a])=>{
       const o=ctx.createOscillator(),g=ctx.createGain();
-      o.type='triangle'; o.frequency.value=f*(0.97+Math.random()*0.06);
+      o.type='sine'; o.frequency.value=f*(0.97+Math.random()*0.06);
       g.gain.setValueAtTime(0,t2); g.gain.linearRampToValueAtTime(a,t2+0.06);
       g.gain.setValueAtTime(a,t2+0.35); g.gain.exponentialRampToValueAtTime(0.0001,t2+0.75);
       o.connect(g); g.connect(sfxBus); o.start(t2); o.stop(t2+0.8);
@@ -300,7 +300,7 @@ const Audio = (() => {
     const t=ctx.currentTime;
     for(let i=0;i<16;i++){
       const tt=t+i*0.05, f=260+i*50+Math.random()*40;
-      osc('triangle',f,0.05,sfxBus,tt,0.18);
+      osc('sine',f,0.05,sfxBus,tt,0.18);
     }
     for(let i=0;i<5;i++) osc('sine',2200+Math.random()*600,0.14,sfxBus,t+Math.random()*0.4,0.3+Math.random()*0.2);
     if(window.speechSynthesis){
@@ -321,7 +321,7 @@ const Audio = (() => {
   // ── SFX ──────────────────────────────────────────────────────────────
   function throwDisc() {
     ensure(); const t=ctx.currentTime;
-    osc('triangle',800,0.3,sfxBus,t,0.06);
+    osc('sine',800,0.3,sfxBus,t,0.06);
     osc('sine',400,0.4,sfxBus,t+0.03,0.15);
     noiseHit(0.12,sfxBus,t,0.07,5000);
   }
@@ -337,7 +337,7 @@ const Audio = (() => {
     ensure(); const t=ctx.currentTime;
     for(let i=0;i<10;i++){
       const tt=t+i*0.04;
-      osc('triangle',850*Math.pow(0.7,i),0.22,sfxBus,tt,0.07);
+      osc('sine',850*Math.pow(0.7,i),0.22,sfxBus,tt,0.07);
       noiseHit(0.2,sfxBus,tt,0.05,4000);
     }
     osc('sine',80,0.6,sfxBus,t+0.05,0.6);
