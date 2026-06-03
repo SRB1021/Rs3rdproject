@@ -167,7 +167,7 @@ const Audio = (() => {
       noiseHit(vol*0.06, hpf(6000,comp), t+b*BEAT+S16, 0.03);
     });
 
-    // ── Heavy synth bass (distorted sawtooth) ────────────────────────
+    // ── Heavy synth bass ─────────────────────────────────────────────
     for(let s=0;s<16;s++){
       const freq=BASS[s]; if(!freq) continue;
       const bt=t+s*S16;
