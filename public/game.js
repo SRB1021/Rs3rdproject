@@ -33,9 +33,15 @@ const tileData     = new Map();
 let rimMesh = null, wallMesh = null, floorMesh = null;
 
 // ── Camera / pointer lock ─────────────────────────────────────────────────
-let yaw = 0, pitch = 0;
+// yaw=0 → camera looks along Three.js -Z → server facing (0,-1)
+// initialise to Math.PI so player starts looking toward +Y (into arena)
+let yaw = Math.PI, pitch = 0;
 let pointerLocked = false;
-let myFacingX = 0, myFacingZ = 1; // Three.js axes: facing +Z = server +Y
+// myFacingX/Z are server-coordinate facing (x and y respectively)
+// Camera look dir in Three.js = (-sin(yaw), 0, -cos(yaw))
+// → server facing.x = -sin(yaw), server facing.y = -cos(yaw)
+let myFacingX = -Math.sin(Math.PI);   // 0
+let myFacingZ = -Math.cos(Math.PI);   // 1  (server +Y)
 
 const EYE_H      = 30;
 const DISC_FLY_H = 20;
@@ -529,8 +535,10 @@ function setupPointerLock(canvas) {
     yaw   -= e.movementX * sens;
     pitch -= e.movementY * sens;
     pitch  = Math.max(-0.55, Math.min(0.55, pitch));
-    myFacingX = Math.sin(yaw);
-    myFacingZ = Math.cos(yaw);
+    // Camera looks along (-sin(yaw), 0, -cos(yaw)) in Three.js
+    // = server facing (-sin(yaw), -cos(yaw))
+    myFacingX = -Math.sin(yaw);
+    myFacingZ = -Math.cos(yaw);
     socket.emit('setFacing', { fx: myFacingX, fy: myFacingZ });
   });
 }
@@ -570,9 +578,11 @@ function sendInput() {
   if (!myId) return;
   if (gamePhase !== 'playing' && gamePhase !== 'finalBattle') return;
 
-  // Forward (server +Y = Three.js +Z) and strafe (server +X = Three.js +X)
-  const fwX = myFacingX, fwZ = myFacingZ;
-  const stX =  myFacingZ, stZ = -myFacingX; // 90° left of forward
+  // myFacingX = -sin(yaw), myFacingZ = -cos(yaw)  (server x,y components)
+  // Camera right in Three.js = (cos(yaw), 0, -sin(yaw))
+  //   → server right = (cos(yaw), -sin(yaw)) = (-myFacingZ, myFacingX)
+  const fwX = myFacingX,  fwZ = myFacingZ;
+  const stX = -myFacingZ, stZ = myFacingX; // strafe right
 
   let vx = 0, vy = 0;
   if (keys['w'])              { vx += fwX; vy += fwZ; }
@@ -617,7 +627,8 @@ function updateScene() {
       if (p.hasDisc) {
         seenDiscs.add(p.id);
         const dm = getOrMakeDiscMesh(p.id, p.color);
-        dm.position.set(s.x + Math.cos(yaw) * 14, EYE_H - 10, s.z - Math.sin(yaw) * 14);
+        // right = (cos(yaw), -sin(yaw)) in Three.js xz plane
+      dm.position.set(s.x + Math.cos(yaw) * 12, EYE_H - 12, s.z - Math.sin(yaw) * 12);
         dm.rotation.y = _discRot;
       }
       // Disc in flight
