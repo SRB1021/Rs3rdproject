@@ -82,7 +82,7 @@ function initThree() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.35;
+  renderer.toneMappingExposure = 0.75;
   renderer.outputEncoding = THREE.sRGBEncoding;
 
   scene = new THREE.Scene();
@@ -101,10 +101,10 @@ function initThree() {
   pmrem.dispose();
 
   // Very dim ambient — all light comes from arena fixtures + env map
-  scene.add(new THREE.AmbientLight(0x020408, 3.0));
+  scene.add(new THREE.AmbientLight(0x020408, 0.8));
 
   // Single shadow-casting directional (key light from above)
-  const dir = new THREE.DirectionalLight(0x7799bb, 0.8);
+  const dir = new THREE.DirectionalLight(0x7799bb, 0.3);
   dir.position.set(80, 500, 120);
   dir.castShadow = true;
   dir.shadow.mapSize.set(2048, 2048);
@@ -142,7 +142,7 @@ function setupPostProcessing() {
   composer.addPass(ssao);
 
   // 3. HDR Bloom — emissive neon glow
-  const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 1.6, 0.6, 0.15);
+  const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 1.1, 0.5, 0.22);
   composer.addPass(bloom);
 
   // 4. SMAA anti-aliasing — sharp edges, no jaggies
@@ -357,7 +357,7 @@ function buildArena(r) {
   const bigRingGlow = new THREE.Mesh(
     new THREE.TorusGeometry(BIG_RING_R, 8, 12, 120),
     new THREE.MeshStandardMaterial({
-      color: 0xffffff, emissive: 0xddeeff, emissiveIntensity: 4.0,
+      color: 0xffffff, emissive: 0xddeeff, emissiveIntensity: 2.0,
       roughness: 0.0, metalness: 0.0
     })
   );
@@ -370,7 +370,7 @@ function buildArena(r) {
   const bigRingInner = new THREE.Mesh(
     new THREE.TorusGeometry(BIG_RING_R * 0.86, 4, 8, 100),
     new THREE.MeshStandardMaterial({
-      color: 0x88bbff, emissive: 0x6699ff, emissiveIntensity: 2.5,
+      color: 0x88bbff, emissive: 0x6699ff, emissiveIntensity: 1.0,
       roughness: 0.0, metalness: 0.0
     })
   );
@@ -380,7 +380,7 @@ function buildArena(r) {
   _arenaObjs.push(bigRingInner);
 
   // Point light riding the big ring — gives it that "halo" lit-from-above feel
-  const ringLight = new THREE.PointLight(0xaaccff, 3.0, r * 3);
+  const ringLight = new THREE.PointLight(0xaaccff, 1.2, r * 3);
   ringLight.position.set(0, BIG_RING_Y, 0);
   scene.add(ringLight);
   _arenaObjs.push(ringLight);
@@ -391,7 +391,7 @@ function buildArena(r) {
     const sa = (i / 4) * Math.PI * 2;
     const sx = Math.cos(sa) * r * 0.55;
     const sz = Math.sin(sa) * r * 0.55;
-    const spot = new THREE.SpotLight(0xcce0ff, 2.5, SPOT_H * 2.2, Math.PI / 10, 0.35, 1.2);
+    const spot = new THREE.SpotLight(0xcce0ff, 1.0, SPOT_H * 2.2, Math.PI / 10, 0.35, 1.2);
     spot.position.set(sx, SPOT_H, sz);
     spot.target.position.set(-sx * 0.3, 0, -sz * 0.3);
     spot.castShadow = (i === 0);
@@ -401,7 +401,7 @@ function buildArena(r) {
   }
 
   // Soft fill from below rim (makes floor reflect)
-  const floorFill = new THREE.PointLight(0x003355, 1.5, r * 1.8);
+  const floorFill = new THREE.PointLight(0x003355, 0.6, r * 1.8);
   floorFill.position.set(0, 20, 0);
   scene.add(floorFill);
   _arenaObjs.push(floorFill);
@@ -456,11 +456,11 @@ function makePlayerGroup(color) {
     color: 0x050b12, roughness: 0.08, metalness: 1.0, envMapIntensity: 2.2
   });
   const glowMat = new THREE.MeshStandardMaterial({
-    color: col, emissive: col, emissiveIntensity: 3.2,
+    color: col, emissive: col, emissiveIntensity: 1.6,
     roughness: 0.0, metalness: 0.0
   });
   const visorMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff, emissive: 0xddf4ff, emissiveIntensity: 4.0,
+    color: 0xffffff, emissive: 0xddf4ff, emissiveIntensity: 1.8,
     roughness: 0.0, metalness: 0.0, transparent: true, opacity: 0.88
   });
 
@@ -549,7 +549,7 @@ function makePlayerGroup(color) {
 
   // Visor bright core
   const visorCore = box(9, 2, 1, new THREE.MeshStandardMaterial({
-    color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 5.0,
+    color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2.5,
     roughness: 0, metalness: 0
   }));
   add(visorCore, 0, 48.2, 8.8);
