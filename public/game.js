@@ -74,53 +74,89 @@ function hexToWorld3(q, r) {
 // ── Init Three.js ─────────────────────────────────────────────────────────
 function initThree() {
   const canvas = document.getElementById('gameCanvas');
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer = new THREE.WebGLRenderer({
+    canvas, antialias: false, // SMAA handles AA instead
+    powerPreference: 'high-performance'
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.2;
+  renderer.toneMappingExposure = 1.35;
+  renderer.outputEncoding = THREE.sRGBEncoding;
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000000);
-  scene.fog = new THREE.FogExp2(0x000000, 0.00028);
+  scene.fog = new THREE.FogExp2(0x000204, 0.00022);
 
-  camera = new THREE.PerspectiveCamera(72, 1, 0.5, 3000);
+  camera = new THREE.PerspectiveCamera(68, 1, 0.5, 4000);
   camera.rotation.order = 'YXZ';
 
-  // Minimal ambient — scene should be mostly dark, lit by arena fixtures
-  scene.add(new THREE.AmbientLight(0x050d1a, 2.0));
+  // Build env map from RoomEnvironment for real metallic reflections
+  const { RoomEnvironment } = window.PP;
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  pmrem.compileEquirectangularShader();
+  const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+  scene.environment = envTex;
+  pmrem.dispose();
 
-  // Overhead fill — subtle, so shadows are visible
-  const dir = new THREE.DirectionalLight(0x6688aa, 0.6);
-  dir.position.set(0, 500, 0);
+  // Very dim ambient — all light comes from arena fixtures + env map
+  scene.add(new THREE.AmbientLight(0x020408, 3.0));
+
+  // Single shadow-casting directional (key light from above)
+  const dir = new THREE.DirectionalLight(0x7799bb, 0.8);
+  dir.position.set(80, 500, 120);
   dir.castShadow = true;
-  dir.shadow.mapSize.set(1024, 1024);
-  dir.shadow.camera.near = 1; dir.shadow.camera.far = 1400;
-  dir.shadow.camera.left = dir.shadow.camera.bottom = -600;
-  dir.shadow.camera.right = dir.shadow.camera.top = 600;
-  dir.shadow.bias = -0.001;
+  dir.shadow.mapSize.set(2048, 2048);
+  dir.shadow.camera.near = 1; dir.shadow.camera.far = 1500;
+  dir.shadow.camera.left = dir.shadow.camera.bottom = -700;
+  dir.shadow.camera.right = dir.shadow.camera.top = 700;
+  dir.shadow.bias = -0.0008;
+  dir.shadow.radius = 3;
   scene.add(dir);
 
   resizeRenderer();
   window.addEventListener('resize', resizeRenderer);
   setupPointerLock(canvas);
   setupInput();
-  setupBloom();
+  setupPostProcessing();
 }
 
-function setupBloom() {
-  const { EffectComposer, RenderPass, UnrealBloomPass } = window.PP;
+function setupPostProcessing() {
+  const {
+    EffectComposer, RenderPass, UnrealBloomPass,
+    SSAOPass, SMAAPass, FilmPass, ShaderPass, VignetteShader
+  } = window.PP;
+
   const w = window.innerWidth, h = window.innerHeight;
   composer = new EffectComposer(renderer);
+
+  // 1. Main scene render
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new UnrealBloomPass(
-    new THREE.Vector2(w, h),
-    1.4,   // strength
-    0.55,  // radius
-    0.18   // threshold — only bright emissive surfaces bloom
-  );
+
+  // 2. SSAO — ambient occlusion makes everything look 3D and grounded
+  const ssao = new SSAOPass(scene, camera, w, h);
+  ssao.kernelRadius = 24;
+  ssao.minDistance  = 0.001;
+  ssao.maxDistance  = 0.06;
+  composer.addPass(ssao);
+
+  // 3. HDR Bloom — emissive neon glow
+  const bloom = new UnrealBloomPass(new THREE.Vector2(w, h), 1.6, 0.6, 0.15);
   composer.addPass(bloom);
+
+  // 4. SMAA anti-aliasing — sharp edges, no jaggies
+  composer.addPass(new SMAAPass(w, h));
+
+  // 5. Film grain — cinematic texture
+  const film = new FilmPass(0.28, 0.0, 648, false);
+  composer.addPass(film);
+
+  // 6. Vignette — darkens edges, focuses eye on centre
+  const vignette = new ShaderPass(VignetteShader);
+  vignette.uniforms['offset'].value = 0.85;
+  vignette.uniforms['darkness'].value = 1.6;
+  composer.addPass(vignette);
 }
 
 function resizeRenderer() {
@@ -139,12 +175,12 @@ function getHexGeo() {
   return _hexGeo;
 }
 const _matIntact = new THREE.MeshStandardMaterial({
-  color: 0x003344, emissive: 0x00ccee, emissiveIntensity: 0.55,
-  roughness: 0.35, metalness: 0.85
+  color: 0x001a22, emissive: 0x00ddff, emissiveIntensity: 0.7,
+  roughness: 0.28, metalness: 0.9, envMapIntensity: 1.2
 });
 const _matCracking = new THREE.MeshStandardMaterial({
-  color: 0x331100, emissive: 0xff5500, emissiveIntensity: 0.85,
-  roughness: 0.4, metalness: 0.6
+  color: 0x3a0d00, emissive: 0xff6600, emissiveIntensity: 1.1,
+  roughness: 0.35, metalness: 0.65, envMapIntensity: 0.8
 });
 
 // ── Arena geometry ─────────────────────────────────────────────────────────
@@ -161,7 +197,7 @@ function buildArena(r) {
   floorMesh = new THREE.Mesh(
     new THREE.CircleGeometry(r + 20, 64),
     new THREE.MeshStandardMaterial({
-      color: 0x000810, roughness: 0.06, metalness: 0.98
+      color: 0x000608, roughness: 0.04, metalness: 1.0, envMapIntensity: 2.5
     })
   );
   floorMesh.rotation.x = -Math.PI / 2;
@@ -414,18 +450,18 @@ function makePlayerGroup(color) {
   const col = new THREE.Color(color);
 
   const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0x030609, roughness: 0.18, metalness: 0.97
+    color: 0x020507, roughness: 0.15, metalness: 0.98, envMapIntensity: 1.8
   });
   const armorMat = new THREE.MeshStandardMaterial({
-    color: 0x060d15, roughness: 0.12, metalness: 0.99
+    color: 0x050b12, roughness: 0.08, metalness: 1.0, envMapIntensity: 2.2
   });
   const glowMat = new THREE.MeshStandardMaterial({
-    color: col, emissive: col, emissiveIntensity: 2.8,
+    color: col, emissive: col, emissiveIntensity: 3.2,
     roughness: 0.0, metalness: 0.0
   });
   const visorMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff, emissive: 0xddf4ff, emissiveIntensity: 3.5,
-    roughness: 0.0, metalness: 0.0, transparent: true, opacity: 0.85
+    color: 0xffffff, emissive: 0xddf4ff, emissiveIntensity: 4.0,
+    roughness: 0.0, metalness: 0.0, transparent: true, opacity: 0.88
   });
 
   function add(mesh, x, y, z) { mesh.position.set(x, y, z); group.add(mesh); return mesh; }
@@ -566,10 +602,11 @@ function getOrMakeDiscMesh(ownerId, color) {
   const col = new THREE.Color(color || '#00f7ff');
 
   const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(11, 11, 3, 24),
+    new THREE.CylinderGeometry(11, 11, 3, 32),
     new THREE.MeshStandardMaterial({
-      color: col, emissive: col, emissiveIntensity: 1.4,
-      roughness: 0.05, metalness: 0.9, transparent: true, opacity: 0.92
+      color: col, emissive: col, emissiveIntensity: 2.0,
+      roughness: 0.02, metalness: 0.95,
+      envMapIntensity: 2.0, transparent: true, opacity: 0.93
     })
   );
   group.add(mesh);
