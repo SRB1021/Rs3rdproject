@@ -282,16 +282,6 @@ function removeTileMesh(key) {
   const m = tileMeshes[key];
   if (!m) return;
   scene.remove(m);
-  // geometry and material are shared — don't dispose them
-  delete tileMeshes[key];
-}
-
-function removeTileMesh(key) {
-  const m = tileMeshes[key];
-  if (!m) return;
-  scene.remove(m);
-  m.geometry.dispose();
-  m.material.dispose();
   delete tileMeshes[key];
 }
 
@@ -471,13 +461,10 @@ function setupInput() {
     const k = e.key.toLowerCase();
     if (keys[k]) return;
     keys[k] = true;
-    if (k === 'd' && (gamePhase === 'playing' || gamePhase === 'finalBattle')) {
-      socket.emit('dodge'); Audio.dodge();
-    }
-    if (e.key === 'Shift' && (gamePhase === 'playing' || gamePhase === 'finalBattle')) {
-      socket.emit('blockStart');
-    }
-    if (k === 'escape' && pointerLocked) document.exitPointerLock();
+    const inGame = gamePhase === 'playing' || gamePhase === 'finalBattle';
+    if ((k === ' ' || k === 'f') && inGame) { socket.emit('dodge'); Audio.dodge(); }
+    if (e.key === 'Shift' && inGame)         { socket.emit('blockStart'); }
+    if (k === 'escape' && pointerLocked)     { document.exitPointerLock(); }
   });
   window.addEventListener('keyup', e => {
     keys[e.key.toLowerCase()] = false;
@@ -485,30 +472,23 @@ function setupInput() {
   });
 }
 
-let _lastVx = 0, _lastVy = 0;
 function sendInput() {
   if (!myId) return;
   if (gamePhase !== 'playing' && gamePhase !== 'finalBattle') return;
 
-  // myFacingX = -sin(yaw), myFacingZ = -cos(yaw)  (server x,y components)
-  // Camera right in Three.js = (cos(yaw), 0, -sin(yaw))
-  //   → server right = (cos(yaw), -sin(yaw)) = (-myFacingZ, myFacingX)
   const fwX = myFacingX,  fwZ = myFacingZ;
-  const stX = -myFacingZ, stZ = myFacingX; // strafe right
+  const stX = -myFacingZ, stZ = myFacingX;
 
   let vx = 0, vy = 0;
-  if (keys['w'])              { vx += fwX; vy += fwZ; }
-  if (keys['s'])              { vx -= fwX; vy -= fwZ; }
-  if (keys['q'] || keys['a']) { vx -= stX; vy -= stZ; }
-  if (keys['e'])              { vx += stX; vy += stZ; }
+  if (keys['w'] || keys['arrowup'])                 { vx += fwX; vy += fwZ; }
+  if (keys['s'] || keys['arrowdown'])               { vx -= fwX; vy -= fwZ; }
+  if (keys['a'] || keys['arrowleft']  || keys['q']) { vx -= stX; vy -= stZ; }
+  if (keys['d'] || keys['arrowright'] || keys['e']) { vx += stX; vy += stZ; }
 
   const l = Math.sqrt(vx * vx + vy * vy);
   if (l > 0) { vx /= l; vy /= l; }
 
-  if (vx !== _lastVx || vy !== _lastVy) {
-    _lastVx = vx; _lastVy = vy;
-    socket.emit('input', { vx, vy });
-  }
+  socket.emit('input', { vx, vy });
 }
 
 // ── Update camera ──────────────────────────────────────────────────────────
