@@ -134,7 +134,7 @@ function resetPlayer(p, pos) {
 
 function startGame(room) {
   room.state  = 'playing';
-  room.arena  = {...STD_ARENA};
+  room.arena  = {...STD_ARENA, radius: Math.min(STD_ARENA.width, STD_ARENA.height)*0.48};
   room.bodies = [];
   room.winner = null;
   room.tileMap = buildTileMap(room.arena);
@@ -319,7 +319,7 @@ function checkWin(room) {
     return;
   }
   if (alive.length===2 && room.state==='playing') {
-    room.state='finalBattle'; room.arena={...FINAL_ARENA};
+    room.state='finalBattle'; room.arena={...FINAL_ARENA, radius: Math.min(FINAL_ARENA.width, FINAL_ARENA.height)*0.48};
     room.tileMap=buildTileMap(room.arena);
     const pos=spawnPosCircular(2,room.arena);
     alive.forEach((p,i)=>{ p.x=pos[i].x; p.y=pos[i].y; p.hasDisc=true; p.disc=null; });
