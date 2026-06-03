@@ -82,9 +82,10 @@ function initThree() {
   camera = new THREE.PerspectiveCamera(72, 1, 0.5, 3000);
   camera.rotation.order = 'YXZ';
 
-  // Ambient + directional shadow light
-  scene.add(new THREE.AmbientLight(0x001830, 2.5));
-  const dir = new THREE.DirectionalLight(0x002244, 1.2);
+  // Strong ambient so the floor tiles are always visible
+  scene.add(new THREE.AmbientLight(0x223355, 4.0));
+  // Directional from above for shadows
+  const dir = new THREE.DirectionalLight(0x8899bb, 2.0);
   dir.position.set(0, 300, 0);
   dir.castShadow = true;
   dir.shadow.mapSize.set(1024, 1024);
@@ -96,7 +97,7 @@ function initThree() {
   // Ceiling grid — TRON city feel
   const ceilGeo = new THREE.PlaneGeometry(6000, 6000, 40, 40);
   const ceilMat = new THREE.MeshBasicMaterial({
-    color: 0x002244, wireframe: true, transparent: true, opacity: 0.07
+    color: 0x0044aa, wireframe: true, transparent: true, opacity: 0.12
   });
   const ceil = new THREE.Mesh(ceilGeo, ceilMat);
   ceil.rotation.x = Math.PI / 2;
@@ -137,7 +138,7 @@ function buildArena(radius) {
   // Tall glowing inner cylinder wall
   const wGeo = new THREE.CylinderGeometry(radius, radius, 220, 72, 1, true);
   const wMat = new THREE.MeshBasicMaterial({
-    color: 0x00f7ff, side: THREE.BackSide, transparent: true, opacity: 0.07
+    color: 0x00f7ff, side: THREE.BackSide, transparent: true, opacity: 0.18
   });
   wallMesh = new THREE.Mesh(wGeo, wMat);
   wallMesh.position.y = 100;
@@ -151,12 +152,12 @@ function buildArena(radius) {
   rimMesh.position.y = 0.5;
   scene.add(rimMesh);
 
-  // Soft fill lighting from floor level
-  const cL = new THREE.PointLight(0x0088cc, 1.0, radius * 3);
+  // Strong fill lights so the arena floor is clearly lit
+  const cL = new THREE.PointLight(0x44aaff, 3.0, radius * 3);
   cL.position.set(0, 80, 0);
   scene.add(cL);
-  const fL = new THREE.PointLight(0x003355, 3, radius * 1.5);
-  fL.position.set(0, 10, 0);
+  const fL = new THREE.PointLight(0x0066aa, 6.0, radius * 2);
+  fL.position.set(0, 15, 0);
   scene.add(fL);
 
   buildDomeLights(radius);
@@ -222,7 +223,7 @@ function buildDomeLights(radius) {
     const lz = Math.sin(a) * LIGHT_R;
 
     // ── SpotLight ──────────────────────────────────────────────────────
-    const spot = new THREE.SpotLight(0xccddff, 2.5, DOME_H + 30, SPOT_ANGLE, 0.28, 1.4);
+    const spot = new THREE.SpotLight(0xccddff, 5.0, DOME_H + 60, SPOT_ANGLE, 0.3, 1.0);
     spot.position.set(lx, DOME_H, lz);
     // Aim slightly toward arena center so beams converge
     spot.target.position.set(lx * 0.35, 0, lz * 0.35);
@@ -234,26 +235,25 @@ function buildDomeLights(radius) {
     // Apex at lamp, base at floor — ConeGeometry apex is at +y end
     const beamGeo = new THREE.ConeGeometry(BEAM_R, BEAM_H, 20, 1, true);
     const beamMat = new THREE.MeshBasicMaterial({
-      color: 0x88bbff,
+      color: 0x88ccff,
       transparent: true,
-      opacity: 0.032,
+      opacity: 0.14,
       side: THREE.FrontSide,
       depthWrite: false,
       blending: THREE.AdditiveBlending
     });
     const beam = new THREE.Mesh(beamGeo, beamMat);
-    // Mesh center is at mid-height; apex (+y) ends at DOME_H
     beam.position.set(lx, DOME_H / 2, lz);
     scene.add(beam);
     _domeLightObjs.push(beam);
 
-    // Second beam pass at lower opacity for extra glow depth
+    // Inner brighter core beam
     const beam2 = new THREE.Mesh(
-      new THREE.ConeGeometry(BEAM_R * 0.55, BEAM_H, 16, 1, true),
+      new THREE.ConeGeometry(BEAM_R * 0.45, BEAM_H, 16, 1, true),
       new THREE.MeshBasicMaterial({
         color: 0xffffff,
         transparent: true,
-        opacity: 0.018,
+        opacity: 0.09,
         side: THREE.FrontSide,
         depthWrite: false,
         blending: THREE.AdditiveBlending
@@ -286,7 +286,7 @@ function buildDomeLights(radius) {
     // Lens glow halo
     const haloGeo = new THREE.CircleGeometry(10, 16);
     const haloMat = new THREE.MeshBasicMaterial({
-      color: 0x88bbff, transparent: true, opacity: 0.25,
+      color: 0x88ccff, transparent: true, opacity: 0.6,
       depthWrite: false, blending: THREE.AdditiveBlending
     });
     const halo = new THREE.Mesh(haloGeo, haloMat);
@@ -296,7 +296,7 @@ function buildDomeLights(radius) {
     _domeLightObjs.push(halo);
 
     // Bright point at each lamp for local bloom
-    const lampPt = new THREE.PointLight(0xbbddff, 0.8, 60);
+    const lampPt = new THREE.PointLight(0xbbddff, 2.5, 100);
     lampPt.position.set(lx, DOME_H - 5, lz);
     scene.add(lampPt);
     _domeLightObjs.push(lampPt);
@@ -311,7 +311,7 @@ function buildDomeLights(radius) {
     const poolMat = new THREE.MeshBasicMaterial({
       color: 0x224466,
       transparent: true,
-      opacity: 0.18,
+      opacity: 0.45,
       depthWrite: false,
       blending: THREE.AdditiveBlending
     });
@@ -348,10 +348,10 @@ function spawnTileMesh(key, wx, wz, state) {
   const geo = new THREE.CylinderGeometry(HEX_SIZE * 0.93, HEX_SIZE * 0.93, 4, 6);
   const isIntact = state === 0;
   const mat = new THREE.MeshStandardMaterial({
-    color:             isIntact ? 0x001a22 : 0x2a0a00,
-    emissive:          isIntact ? 0x003344 : 0x883300,
-    emissiveIntensity: isIntact ? 0.18     : 0.7,
-    roughness: 0.35, metalness: 0.7
+    color:             isIntact ? 0x002233 : 0x331100,
+    emissive:          isIntact ? 0x00ccff : 0xff6600,
+    emissiveIntensity: isIntact ? 0.35     : 1.2,
+    roughness: 0.3, metalness: 0.8
   });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.y = Math.PI / 6;
