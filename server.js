@@ -206,8 +206,8 @@ function tickBot(bot, room, dt) {
     }
   }
 
-  if (danger && !bot.dodging && !bot.blocking && inGame) {
-    if (Math.random() < 0.35) {
+  if (danger && !bot.dodging && !bot.blocking && inGame && Math.random() < 0.55) {
+    if (Math.random() < 0.18) {
       // BLOCK: stand ground and raise disc
       bot.blocking=true;
       bot.botBlockTimer=0.7+Math.random()*0.5;
@@ -265,17 +265,18 @@ function tickBot(bot, room, dt) {
 
   if (bot.hasDisc) {
     // APPROACH then THROW
-    const throwRange = 320;
+    const throwRange = 210;
     const readyToThrow = eDist < throwRange && bot.botTimer <= 0;
 
     if (readyToThrow) {
-      // lead the target based on distance
-      const leadTime = eDist / DISC_SPEED;
-      const tx=nearest.x + nearest.inputVx*P_SPEED*leadTime*1.1;
-      const ty=nearest.y + nearest.inputVy*P_SPEED*leadTime*1.1;
+      // imprecise aim — bots lead target poorly and add random spread
+      const leadTime = eDist / DISC_SPEED * 0.5;
+      const spread = (Math.random() - 0.5) * 80;
+      const tx=nearest.x + nearest.inputVx*P_SPEED*leadTime + spread;
+      const ty=nearest.y + nearest.inputVy*P_SPEED*leadTime + spread;
       bot.hasDisc=false;
       bot.disc=makeDisc(bot,tx,ty);
-      bot.botTimer=1.0+Math.random()*0.8;
+      bot.botTimer=1.6+Math.random()*1.2;
       io.to(room.code).emit('discThrown',{playerId:bot.id});
       bot.inputVx=0; bot.inputVy=0;
     } else if (eDist > throwRange) {
@@ -303,6 +304,10 @@ function tickBot(bot, room, dt) {
       bot.hasDisc=true;
     }
   }
+
+  // Bots move at 70% of player speed
+  bot.inputVx *= 0.70;
+  bot.inputVy *= 0.70;
 
   const mx=bot.inputVx, my=bot.inputVy;
   if(mx||my){const l=Math.sqrt(mx*mx+my*my);bot.facing.x=mx/l;bot.facing.y=my/l;}

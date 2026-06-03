@@ -25,7 +25,7 @@ let arenaInfo = { width: 1440, height: 1000, radius: 480 };
 let gravity = { x: 0, y: 0 };
 
 // ── Three.js objects ──────────────────────────────────────────────────────
-let renderer, scene, camera, animId;
+let renderer, scene, camera, animId, composer;
 const playerMeshes = {};
 const discMeshes   = {};
 const tileMeshes   = {};
@@ -106,12 +106,28 @@ function initThree() {
   window.addEventListener('resize', resizeRenderer);
   setupPointerLock(canvas);
   setupInput();
+  setupBloom();
+}
+
+function setupBloom() {
+  const { EffectComposer, RenderPass, UnrealBloomPass } = window.PP;
+  const w = window.innerWidth, h = window.innerHeight;
+  composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(
+    new THREE.Vector2(w, h),
+    1.4,   // strength
+    0.55,  // radius
+    0.18   // threshold — only bright emissive surfaces bloom
+  );
+  composer.addPass(bloom);
 }
 
 function resizeRenderer() {
   const w = window.innerWidth;
   const h = window.innerHeight;
   renderer.setSize(w, h);
+  if (composer) composer.setSize(w, h);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
@@ -759,7 +775,7 @@ function gameLoop(ts) {
   updateCamera();
   updateScene();
   animateTiles(ts);
-  renderer.render(scene, camera);
+  if (composer) composer.render(); else renderer.render(scene, camera);
 }
 
 function startLoop() {
