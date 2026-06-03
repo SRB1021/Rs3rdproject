@@ -116,25 +116,74 @@ function initThree() {
   setupPostProcessing();
 }
 
+// Chromatic aberration — colour fringing like a real camera lens
+const ChromaticAberrationShader = {
+  uniforms: {
+    tDiffuse:  { value: null },
+    amount:    { value: 0.0028 },
+    angle:     { value: 0.0 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float amount;
+    uniform float angle;
+    varying vec2 vUv;
+    void main() {
+      vec2 offset = amount * vec2(cos(angle), sin(angle));
+      vec4 cr = texture2D(tDiffuse, vUv + offset);
+      vec4 cg = texture2D(tDiffuse, vUv);
+      vec4 cb = texture2D(tDiffuse, vUv - offset);
+      gl_FragColor = vec4(cr.r, cg.g, cb.b, cg.a);
+    }
+  `
+};
+
 function setupPostProcessing() {
-  const { EffectComposer, RenderPass, UnrealBloomPass, SSAOPass, SMAAPass, FilmPass, ShaderPass, VignetteShader } = window.PP;
+  const {
+    EffectComposer, RenderPass, UnrealBloomPass,
+    SSAOPass, SMAAPass, FilmPass, BokehPass, ShaderPass, VignetteShader
+  } = window.PP;
   const w = window.innerWidth, h = window.innerHeight;
   composer = new EffectComposer(renderer);
+
+  // 1. Scene render
   composer.addPass(new RenderPass(scene, camera));
 
+  // 2. SSAO — ambient occlusion, grounding and depth
   const ssao = new SSAOPass(scene, camera, w, h);
-  ssao.kernelRadius = 24; ssao.minDistance = 0.001; ssao.maxDistance = 0.06;
+  ssao.kernelRadius = 28; ssao.minDistance = 0.001; ssao.maxDistance = 0.055;
   composer.addPass(ssao);
 
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 1.1, 0.5, 0.18));
+  // 3. HDR bloom — neon glow halos
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), 1.2, 0.55, 0.16));
+
+  // 4. Depth of field — shallow focus like a real movie camera
+  const dof = new BokehPass(scene, camera, {
+    focus:    180.0,   // focus distance (units)
+    aperture: 0.00004, // smaller = sharper, larger = more blur
+    maxblur:  0.006,
+    width: w, height: h
+  });
+  composer.addPass(dof);
+
+  // 5. Chromatic aberration — lens colour fringing
+  const chroma = new ShaderPass(ChromaticAberrationShader);
+  composer.addPass(chroma);
+
+  // 6. SMAA — clean up jagged edges
   composer.addPass(new SMAAPass(w, h));
 
-  const film = new FilmPass(0.25, 0.0, 648, false);
-  composer.addPass(film);
+  // 7. Film grain — cinematic texture noise
+  composer.addPass(new FilmPass(0.22, 0.0, 648, false));
 
+  // 8. Vignette — darkens corners like a real lens
   const vignette = new ShaderPass(VignetteShader);
-  vignette.uniforms['offset'].value = 0.85;
-  vignette.uniforms['darkness'].value = 1.5;
+  vignette.uniforms['offset'].value = 0.80;
+  vignette.uniforms['darkness'].value = 1.8;
   composer.addPass(vignette);
 }
 
@@ -364,12 +413,19 @@ function buildArena(r) {
   scene.add(ringLight);
   _arenaObjs.push(ringLight);
 
-  // ── Overhead combat spotlights (4, crisscrossing over platform) ──────────
+  // ── Overhead combat spotlights + volumetric god ray shafts ───────────────
   const SPOT_H = BIG_RING_Y - 10;
+  const godRayMat = new THREE.MeshBasicMaterial({
+    color: 0x8ab8ff, transparent: true, opacity: 0.055,
+    depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide
+  });
+
   for (let i = 0; i < 4; i++) {
     const sa = (i / 4) * Math.PI * 2;
     const sx = Math.cos(sa) * r * 0.55;
     const sz = Math.sin(sa) * r * 0.55;
+
+    // SpotLight
     const spot = new THREE.SpotLight(0xcce0ff, 1.0, SPOT_H * 2.2, Math.PI / 10, 0.35, 1.2);
     spot.position.set(sx, SPOT_H, sz);
     spot.target.position.set(-sx * 0.3, 0, -sz * 0.3);
@@ -377,6 +433,26 @@ function buildArena(r) {
     if (i === 0) { spot.shadow.mapSize.set(1024, 1024); spot.shadow.bias = -0.001; }
     scene.add(spot); scene.add(spot.target);
     _arenaObjs.push(spot); _arenaObjs.push(spot.target);
+
+    // God ray shaft — tapered cone from lamp down to floor
+    const rayH = SPOT_H;
+    const rayR = rayH * Math.tan(Math.PI / 10) * 0.9;
+    const ray = new THREE.Mesh(new THREE.ConeGeometry(rayR, rayH, 10, 1, true), godRayMat);
+    ray.position.set(sx * 0.85, SPOT_H / 2, sz * 0.85);
+    scene.add(ray);
+    _arenaObjs.push(ray);
+
+    // Tight bright core ray
+    const core = new THREE.Mesh(
+      new THREE.ConeGeometry(rayR * 0.18, rayH, 6, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff, transparent: true, opacity: 0.03,
+        depthWrite: false, blending: THREE.AdditiveBlending
+      })
+    );
+    core.position.copy(ray.position);
+    scene.add(core);
+    _arenaObjs.push(core);
   }
 
   // Soft fill from below rim (makes floor reflect)
@@ -384,6 +460,16 @@ function buildArena(r) {
   floorFill.position.set(0, 20, 0);
   scene.add(floorFill);
   _arenaObjs.push(floorFill);
+
+  // Atmospheric haze — very faint additive sphere fills the interior
+  const hazeMat = new THREE.MeshBasicMaterial({
+    color: 0x112233, transparent: true, opacity: 0.04,
+    depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.BackSide
+  });
+  const haze = new THREE.Mesh(new THREE.SphereGeometry(r * 0.9, 16, 10), hazeMat);
+  haze.position.y = 100;
+  scene.add(haze);
+  _arenaObjs.push(haze);
 }
 
 // ── Tile map ───────────────────────────────────────────────────────────────
@@ -791,7 +877,27 @@ function gameLoop(ts) {
   updateCamera();
   updateScene();
   animateTiles(ts);
+  animateArena(ts);
   if (composer) composer.render(); else renderer.render(scene, camera);
+}
+
+// Animate emissive neon — subtle breathing + occasional flicker
+function animateArena(ts) {
+  const t = ts * 0.001;
+  // Rim slow pulse
+  if (rimMesh && rimMesh.material.emissive) {
+    rimMesh.material.emissiveIntensity = 2.2 + 0.6 * Math.sin(t * 1.1);
+  }
+  // Occasional neon flicker on wall strips
+  if (_arenaObjs.length && Math.random() < 0.004) {
+    const strips = _arenaObjs.filter(o => o.isMesh && o.material && o.material.emissive);
+    if (strips.length) {
+      const s = strips[Math.floor(Math.random() * strips.length)];
+      const base = s.material.emissiveIntensity;
+      s.material.emissiveIntensity = base * (0.3 + Math.random() * 0.4);
+      setTimeout(() => { if (s.material) s.material.emissiveIntensity = base; }, 60 + Math.random() * 80);
+    }
+  }
 }
 
 function startLoop() {

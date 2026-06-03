@@ -2702,6 +2702,214 @@
     }
   };
 
+  // node_modules/three/examples/jsm/shaders/BokehShader.js
+  var BokehShader = {
+    defines: {
+      "DEPTH_PACKING": 1,
+      "PERSPECTIVE_CAMERA": 1
+    },
+    uniforms: {
+      "tColor": { value: null },
+      "tDepth": { value: null },
+      "focus": { value: 1 },
+      "aspect": { value: 1 },
+      "aperture": { value: 0.025 },
+      "maxblur": { value: 0.01 },
+      "nearClip": { value: 1 },
+      "farClip": { value: 1e3 }
+    },
+    vertexShader: (
+      /* glsl */
+      `
+
+		varying vec2 vUv;
+
+		void main() {
+
+			vUv = uv;
+			gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+		}`
+    ),
+    fragmentShader: (
+      /* glsl */
+      `
+
+		#include <common>
+
+		varying vec2 vUv;
+
+		uniform sampler2D tColor;
+		uniform sampler2D tDepth;
+
+		uniform float maxblur; // max blur amount
+		uniform float aperture; // aperture - bigger values for shallower depth of field
+
+		uniform float nearClip;
+		uniform float farClip;
+
+		uniform float focus;
+		uniform float aspect;
+
+		#include <packing>
+
+		float getDepth( const in vec2 screenPosition ) {
+			#if DEPTH_PACKING == 1
+			return unpackRGBAToDepth( texture2D( tDepth, screenPosition ) );
+			#else
+			return texture2D( tDepth, screenPosition ).x;
+			#endif
+		}
+
+		float getViewZ( const in float depth ) {
+			#if PERSPECTIVE_CAMERA == 1
+			return perspectiveDepthToViewZ( depth, nearClip, farClip );
+			#else
+			return orthographicDepthToViewZ( depth, nearClip, farClip );
+			#endif
+		}
+
+
+		void main() {
+
+			vec2 aspectcorrect = vec2( 1.0, aspect );
+
+			float viewZ = getViewZ( getDepth( vUv ) );
+
+			float factor = ( focus + viewZ ); // viewZ is <= 0, so this is a difference equation
+
+			vec2 dofblur = vec2 ( clamp( factor * aperture, -maxblur, maxblur ) );
+
+			vec2 dofblur9 = dofblur * 0.9;
+			vec2 dofblur7 = dofblur * 0.7;
+			vec2 dofblur4 = dofblur * 0.4;
+
+			vec4 col = vec4( 0.0 );
+
+			col += texture2D( tColor, vUv.xy );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.0,   0.4  ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.15,  0.37 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.29,  0.29 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.37,  0.15 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.40,  0.0  ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.37, -0.15 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.29, -0.29 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.15, -0.37 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.0,  -0.4  ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.15,  0.37 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.29,  0.29 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.37,  0.15 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.4,   0.0  ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.37, -0.15 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.29, -0.29 ) * aspectcorrect ) * dofblur );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.15, -0.37 ) * aspectcorrect ) * dofblur );
+
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.15,  0.37 ) * aspectcorrect ) * dofblur9 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.37,  0.15 ) * aspectcorrect ) * dofblur9 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.37, -0.15 ) * aspectcorrect ) * dofblur9 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.15, -0.37 ) * aspectcorrect ) * dofblur9 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.15,  0.37 ) * aspectcorrect ) * dofblur9 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.37,  0.15 ) * aspectcorrect ) * dofblur9 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.37, -0.15 ) * aspectcorrect ) * dofblur9 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.15, -0.37 ) * aspectcorrect ) * dofblur9 );
+
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.29,  0.29 ) * aspectcorrect ) * dofblur7 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.40,  0.0  ) * aspectcorrect ) * dofblur7 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.29, -0.29 ) * aspectcorrect ) * dofblur7 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.0,  -0.4  ) * aspectcorrect ) * dofblur7 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.29,  0.29 ) * aspectcorrect ) * dofblur7 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.4,   0.0  ) * aspectcorrect ) * dofblur7 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.29, -0.29 ) * aspectcorrect ) * dofblur7 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.0,   0.4  ) * aspectcorrect ) * dofblur7 );
+
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.29,  0.29 ) * aspectcorrect ) * dofblur4 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.4,   0.0  ) * aspectcorrect ) * dofblur4 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.29, -0.29 ) * aspectcorrect ) * dofblur4 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.0,  -0.4  ) * aspectcorrect ) * dofblur4 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.29,  0.29 ) * aspectcorrect ) * dofblur4 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.4,   0.0  ) * aspectcorrect ) * dofblur4 );
+			col += texture2D( tColor, vUv.xy + ( vec2( -0.29, -0.29 ) * aspectcorrect ) * dofblur4 );
+			col += texture2D( tColor, vUv.xy + ( vec2(  0.0,   0.4  ) * aspectcorrect ) * dofblur4 );
+
+			gl_FragColor = col / 41.0;
+			gl_FragColor.a = 1.0;
+
+		}`
+    )
+  };
+
+  // node_modules/three/examples/jsm/postprocessing/BokehPass.js
+  var BokehPass = class extends Pass {
+    constructor(scene, camera, params) {
+      super();
+      this.scene = scene;
+      this.camera = camera;
+      const focus = params.focus !== void 0 ? params.focus : 1;
+      const aspect = params.aspect !== void 0 ? params.aspect : camera.aspect;
+      const aperture = params.aperture !== void 0 ? params.aperture : 0.025;
+      const maxblur = params.maxblur !== void 0 ? params.maxblur : 1;
+      const width = params.width || window.innerWidth || 1;
+      const height = params.height || window.innerHeight || 1;
+      this.renderTargetDepth = new WebGLRenderTarget(width, height, {
+        minFilter: NearestFilter,
+        magFilter: NearestFilter
+      });
+      this.renderTargetDepth.texture.name = "BokehPass.depth";
+      this.materialDepth = new MeshDepthMaterial();
+      this.materialDepth.depthPacking = RGBADepthPacking;
+      this.materialDepth.blending = NoBlending;
+      if (BokehShader === void 0) {
+        console.error("THREE.BokehPass relies on BokehShader");
+      }
+      const bokehShader = BokehShader;
+      const bokehUniforms = UniformsUtils.clone(bokehShader.uniforms);
+      bokehUniforms["tDepth"].value = this.renderTargetDepth.texture;
+      bokehUniforms["focus"].value = focus;
+      bokehUniforms["aspect"].value = aspect;
+      bokehUniforms["aperture"].value = aperture;
+      bokehUniforms["maxblur"].value = maxblur;
+      bokehUniforms["nearClip"].value = camera.near;
+      bokehUniforms["farClip"].value = camera.far;
+      this.materialBokeh = new ShaderMaterial({
+        defines: Object.assign({}, bokehShader.defines),
+        uniforms: bokehUniforms,
+        vertexShader: bokehShader.vertexShader,
+        fragmentShader: bokehShader.fragmentShader
+      });
+      this.uniforms = bokehUniforms;
+      this.needsSwap = false;
+      this.fsQuad = new FullScreenQuad(this.materialBokeh);
+      this._oldClearColor = new Color();
+    }
+    render(renderer, writeBuffer, readBuffer) {
+      this.scene.overrideMaterial = this.materialDepth;
+      renderer.getClearColor(this._oldClearColor);
+      const oldClearAlpha = renderer.getClearAlpha();
+      const oldAutoClear = renderer.autoClear;
+      renderer.autoClear = false;
+      renderer.setClearColor(16777215);
+      renderer.setClearAlpha(1);
+      renderer.setRenderTarget(this.renderTargetDepth);
+      renderer.clear();
+      renderer.render(this.scene, this.camera);
+      this.uniforms["tColor"].value = readBuffer.texture;
+      this.uniforms["nearClip"].value = this.camera.near;
+      this.uniforms["farClip"].value = this.camera.far;
+      if (this.renderToScreen) {
+        renderer.setRenderTarget(null);
+        this.fsQuad.render(renderer);
+      } else {
+        renderer.setRenderTarget(writeBuffer);
+        renderer.clear();
+        this.fsQuad.render(renderer);
+      }
+      this.scene.overrideMaterial = null;
+      renderer.setClearColor(this._oldClearColor);
+      renderer.setClearAlpha(oldClearAlpha);
+      renderer.autoClear = oldAutoClear;
+    }
+  };
+
   // node_modules/three/examples/jsm/shaders/VignetteShader.js
   var VignetteShader = {
     uniforms: {
@@ -2831,6 +3039,7 @@
     SSAOPass,
     SMAAPass,
     FilmPass,
+    BokehPass,
     CopyShader,
     VignetteShader,
     RoomEnvironment
