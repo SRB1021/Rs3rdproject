@@ -330,24 +330,49 @@ function buildArena(r) {
   });
 
   // ── Crowd particle field ───────────────────────────────────────────────────
-  const CROWD = _mob ? 1500 : 4000;
+  const CROWD = _mob ? 2000 : 5000;
   const cpos = new Float32Array(CROWD * 3), ccol = new Float32Array(CROWD * 3);
   for (let i = 0, ci = 0; i < CROWD; i++, ci += 3) {
     const a = Math.random() * Math.PI * 2;
     const t = TIERS[Math.floor(Math.random() * TIERS.length)];
     const cr = t.r0 + Math.random() * (t.r1 - t.r0);
-    const cy = t.y + t.h / 2 + Math.random() * 40;
+    const cy = t.y + t.h / 2 + Math.random() * 50;
     cpos[ci] = Math.cos(a) * cr; cpos[ci+1] = cy; cpos[ci+2] = Math.sin(a) * cr;
-    const warm = Math.random() < 0.07;
-    ccol[ci]   = warm ? 1.0 : 0.6 + Math.random() * 0.4;
-    ccol[ci+1] = warm ? 0.5 : 0.8 + Math.random() * 0.2;
-    ccol[ci+2] = warm ? 0.1 : 1.0;
+    const warm = Math.random() < 0.10;
+    const bright = 0.75 + Math.random() * 0.25;
+    ccol[ci]   = warm ? 1.0 : bright * 0.7;
+    ccol[ci+1] = warm ? 0.55 : bright * 0.88;
+    ccol[ci+2] = warm ? 0.1  : bright;
   }
   const cg = new THREE.BufferGeometry();
   cg.setAttribute('position', new THREE.BufferAttribute(cpos, 3));
   cg.setAttribute('color',    new THREE.BufferAttribute(ccol, 3));
-  const crowd = new THREE.Points(cg, new THREE.PointsMaterial({ size: 2.6, vertexColors: true, sizeAttenuation: true }));
+  // Larger size so crowd is actually visible from combat platform
+  const crowd = new THREE.Points(cg, new THREE.PointsMaterial({ size: 4.5, vertexColors: true, sizeAttenuation: true }));
   scene.add(crowd); _arenaObjs.push(crowd);
+
+  // Crowd silhouette rows — dark humanoid blocks packed into stands
+  const SILO_MAT = new THREE.MeshBasicMaterial({ color: 0x001a2a });
+  const SILO_GEO = new THREE.BoxGeometry(6, 14, 4);
+  const SILO_ROWS = _mob ? 40 : 120;
+  for (let i = 0; i < SILO_ROWS; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const t = TIERS[1 + Math.floor(Math.random() * (TIERS.length - 1))];
+    const cr = t.r0 + Math.random() * (t.r1 - t.r0);
+    const cy = t.y + t.h / 2 + 8;
+    const silo = new THREE.Mesh(SILO_GEO, SILO_MAT);
+    silo.position.set(Math.cos(a) * cr, cy, Math.sin(a) * cr);
+    silo.rotation.y = a;
+    scene.add(silo); _arenaObjs.push(silo);
+  }
+
+  // Crowd ambient glow — warm wash from stands area
+  const crowdGlow1 = new THREE.PointLight(0x1133aa, 0.7, r * 2.5);
+  crowdGlow1.position.set(r * 1.3, 120, 0);
+  scene.add(crowdGlow1); _arenaObjs.push(crowdGlow1);
+  const crowdGlow2 = new THREE.PointLight(0x1133aa, 0.7, r * 2.5);
+  crowdGlow2.position.set(-r * 1.3, 120, 0);
+  scene.add(crowdGlow2); _arenaObjs.push(crowdGlow2);
 
   // ── Venue ceiling ──────────────────────────────────────────────────────────
   const ceiling = new THREE.Mesh(
@@ -446,6 +471,94 @@ function buildArena(r) {
     const ray = new THREE.Mesh(new THREE.ConeGeometry(rayR, rayH, 10, 1, true), godRayMat);
     ray.position.set(sx * 0.8, SPOT_H / 2, sz * 0.8);
     scene.add(ray); _arenaObjs.push(ray);
+  }
+
+  // ── Arena pods — large floating rectangular panels around combat ring ────────
+  // Matches the TRON disc wars arena: dark box pods with glowing cyan edges
+  const POD_COUNT = 6;
+  const POD_W = r * 0.55, POD_H = r * 0.45, POD_D = 28;
+  const POD_R  = r * 1.08;   // radius from center
+  const POD_Y  = 60;          // mid-height
+
+  const podBodyMat = new THREE.MeshStandardMaterial({
+    color: 0x000d1a, roughness: 0.25, metalness: 0.95, envMapIntensity: 1.5
+  });
+  const podEdgeMat = new THREE.MeshStandardMaterial({
+    color: 0x00ccff, emissive: 0x00aaff, emissiveIntensity: 2.2,
+    roughness: 0.0, metalness: 0.0
+  });
+  const podFaceMat = new THREE.MeshStandardMaterial({
+    color: 0x001a2e, emissive: 0x003355, emissiveIntensity: 0.6,
+    roughness: 0.4, metalness: 0.7, envMapIntensity: 1.0
+  });
+
+  for (let i = 0; i < POD_COUNT; i++) {
+    const pa = (i / POD_COUNT) * Math.PI * 2;
+    const px = Math.cos(pa) * POD_R;
+    const pz = Math.sin(pa) * POD_R;
+
+    const podGroup = new THREE.Group();
+    podGroup.position.set(px, POD_Y, pz);
+    podGroup.rotation.y = pa + Math.PI / 2;
+
+    // Main body block
+    const body = new THREE.Mesh(new THREE.BoxGeometry(POD_W, POD_H, POD_D), podBodyMat);
+    podGroup.add(body);
+
+    // Front face panel (slightly inset)
+    const face = new THREE.Mesh(new THREE.BoxGeometry(POD_W * 0.88, POD_H * 0.84, 2), podFaceMat);
+    face.position.z = POD_D / 2 + 0.5;
+    podGroup.add(face);
+
+    // Glowing edge strips — top, bottom, left, right
+    const eT = new THREE.Mesh(new THREE.BoxGeometry(POD_W + 4, 3, POD_D + 4), podEdgeMat);
+    eT.position.y =  POD_H / 2 + 1; podGroup.add(eT);
+    const eB = new THREE.Mesh(new THREE.BoxGeometry(POD_W + 4, 3, POD_D + 4), podEdgeMat);
+    eB.position.y = -POD_H / 2 - 1; podGroup.add(eB);
+    const eL = new THREE.Mesh(new THREE.BoxGeometry(3, POD_H + 4, POD_D + 4), podEdgeMat);
+    eL.position.x = -POD_W / 2 - 1; podGroup.add(eL);
+    const eR = new THREE.Mesh(new THREE.BoxGeometry(3, POD_H + 4, POD_D + 4), podEdgeMat);
+    eR.position.x =  POD_W / 2 + 1; podGroup.add(eR);
+
+    // Corner accent lines on front face
+    const cornerMat = new THREE.MeshBasicMaterial({ color: 0x00eeff });
+    [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx2, sy]) => {
+      const c = new THREE.Mesh(new THREE.BoxGeometry(POD_W * 0.12, 2, 2), cornerMat);
+      c.position.set(sx2 * POD_W * 0.38, sy * POD_H * 0.42, POD_D / 2 + 1.5);
+      podGroup.add(c);
+      const c2 = new THREE.Mesh(new THREE.BoxGeometry(2, POD_H * 0.12, 2), cornerMat);
+      c2.position.set(sx2 * POD_W * 0.44, sy * POD_H * 0.38, POD_D / 2 + 1.5);
+      podGroup.add(c2);
+    });
+
+    // Inner horizontal data lines on face
+    for (let li = 0; li < 4; li++) {
+      const ly = -POD_H * 0.28 + li * (POD_H * 0.18);
+      const line = new THREE.Mesh(
+        new THREE.BoxGeometry(POD_W * 0.7, 1.2, 1),
+        new THREE.MeshBasicMaterial({ color: li === 1 ? 0x00ffff : 0x005577 })
+      );
+      line.position.set(0, ly, POD_D / 2 + 1.5);
+      podGroup.add(line);
+    }
+
+    // Pod glow light (illuminates the floor around the pod)
+    const podLight = new THREE.PointLight(0x0088cc, 0.5, r * 0.7);
+    podLight.position.set(0, -20, 0);
+    podGroup.add(podLight);
+
+    scene.add(podGroup);
+    _arenaObjs.push(podGroup);
+  }
+
+  // ── Connecting support struts between pods and outer ring ─────────────────
+  for (let i = 0; i < POD_COUNT; i++) {
+    const pa = (i / POD_COUNT) * Math.PI * 2;
+    const strutMat = new THREE.MeshStandardMaterial({ color: 0x000a18, roughness: 0.5, metalness: 0.9 });
+    // Vertical pillar down from pod bottom
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(6, POD_Y, 6), strutMat);
+    pillar.position.set(Math.cos(pa) * POD_R, POD_Y / 2 - POD_H / 2, Math.sin(pa) * POD_R);
+    scene.add(pillar); _arenaObjs.push(pillar);
   }
 
   // ── Sub-platform cyan under-glow ──────────────────────────────────────────
