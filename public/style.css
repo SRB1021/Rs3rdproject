@@ -221,6 +221,7 @@ input:focus { box-shadow: 0 0 8px var(--cyan); }
   width: 100% !important;
   height: 100% !important;
   cursor: none;
+  filter: brightness(1.05) contrast(1.12) saturate(1.15);
 }
 
 /* HUD */
