@@ -69,11 +69,8 @@ function hexToWorld3(q, r) {
 function initThree() {
   const canvas = document.getElementById('gameCanvas');
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.1;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+  renderer.shadowMap.enabled = false;
 
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000408);
@@ -82,16 +79,11 @@ function initThree() {
   camera = new THREE.PerspectiveCamera(72, 1, 0.5, 3000);
   camera.rotation.order = 'YXZ';
 
-  // Strong ambient so the floor tiles are always visible
-  scene.add(new THREE.AmbientLight(0x223355, 4.0));
-  // Directional from above for shadows
-  const dir = new THREE.DirectionalLight(0x8899bb, 2.0);
+  // Strong ambient so everything is always visible
+  scene.add(new THREE.AmbientLight(0x334466, 5.0));
+  // Single directional light — no shadows (shadows are expensive)
+  const dir = new THREE.DirectionalLight(0xaabbcc, 1.5);
   dir.position.set(0, 300, 0);
-  dir.castShadow = true;
-  dir.shadow.mapSize.set(1024, 1024);
-  dir.shadow.camera.near = 1; dir.shadow.camera.far = 900;
-  dir.shadow.camera.left = dir.shadow.camera.bottom = -700;
-  dir.shadow.camera.right = dir.shadow.camera.top = 700;
   scene.add(dir);
 
   // Ceiling grid — TRON city feel
@@ -222,14 +214,11 @@ function buildDomeLights(radius) {
     const lx = Math.cos(a) * LIGHT_R;
     const lz = Math.sin(a) * LIGHT_R;
 
-    // ── SpotLight ──────────────────────────────────────────────────────
-    const spot = new THREE.SpotLight(0xccddff, 5.0, DOME_H + 60, SPOT_ANGLE, 0.3, 1.0);
+    // ── PointLight (cheaper than SpotLight, same glow effect) ─────────
+    const spot = new THREE.PointLight(0xaaccff, 2.0, DOME_H + 60);
     spot.position.set(lx, DOME_H, lz);
-    // Aim slightly toward arena center so beams converge
-    spot.target.position.set(lx * 0.35, 0, lz * 0.35);
     scene.add(spot);
-    scene.add(spot.target);
-    _domeLightObjs.push(spot, spot.target);
+    _domeLightObjs.push(spot);
 
     // ── Visible beam cone ──────────────────────────────────────────────
     // Apex at lamp, base at floor — ConeGeometry apex is at +y end
@@ -356,7 +345,7 @@ function spawnTileMesh(key, wx, wz, state) {
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.y = Math.PI / 6;
   mesh.position.set(wx, -2.5, wz);
-  mesh.receiveShadow = true;
+  
   mesh.userData.state = state;
   scene.add(mesh);
   tileMeshes[key] = mesh;
@@ -512,7 +501,7 @@ function spawnBodyMesh(body) {
   );
   const s = toScene(body.x, body.y);
   m.position.set(s.x, 0.8, s.z);
-  m.receiveShadow = true;
+  
   scene.add(m);
 }
 
@@ -664,9 +653,11 @@ function updateScene() {
     }
   });
 
-  // Remove stale player/disc meshes
+  // Remove stale player meshes; hide discs rather than delete them
   Object.keys(playerMeshes).forEach(id => { if (!players[id]) removePlayerMesh(id); });
-  Object.keys(discMeshes).forEach(id => { if (!seenDiscs.has(id)) removeDiscMesh(id); });
+  Object.keys(discMeshes).forEach(id => {
+    if (!seenDiscs.has(id)) discMeshes[id].visible = false;
+  });
 }
 
 // ── Tile cracking animation ────────────────────────────────────────────────
