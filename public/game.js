@@ -80,7 +80,7 @@ function initThree() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.85;
+  renderer.toneMappingExposure = 0.95;
   renderer.outputEncoding = THREE.sRGBEncoding;
 
   scene = new THREE.Scene();
@@ -97,9 +97,9 @@ function initThree() {
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   pmrem.dispose();
 
-  scene.add(new THREE.AmbientLight(0x0a1a2a, 0.7));
+  scene.add(new THREE.AmbientLight(0x0d2035, 0.9));
 
-  const dir = new THREE.DirectionalLight(0x5577aa, 0.5);
+  const dir = new THREE.DirectionalLight(0x6688bb, 0.65);
   dir.position.set(80, 500, 120);
   dir.castShadow = true;
   dir.shadow.mapSize.set(2048, 2048);
@@ -164,8 +164,8 @@ function setupPostProcessing() {
   }
 
   // 3. HDR bloom — neon glow halos
-  const bloomStrength = isMobile ? 1.0 : 0.85;
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), bloomStrength, 0.5, 0.22));
+  const bloomStrength = isMobile ? 0.9 : 0.75;
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), bloomStrength, 0.5, 0.28));
 
   if (!isMobile) {
     // 4. Depth of field (desktop only)
@@ -566,9 +566,17 @@ function buildArena(r) {
   floorFill.position.set(0, -30, 0);
   scene.add(floorFill); _arenaObjs.push(floorFill);
 
-  const platformGlow = new THREE.PointLight(0x00ddff, 1.2, r * 1.4);
+  const platformGlow = new THREE.PointLight(0x00ddff, 1.4, r * 1.6);
   platformGlow.position.set(0, 15, 0);
   scene.add(platformGlow); _arenaObjs.push(platformGlow);
+
+  // Fill lights at pod level so players are clearly visible
+  for (let i = 0; i < 3; i++) {
+    const fa = (i / 3) * Math.PI * 2;
+    const fill = new THREE.PointLight(0x4488bb, 0.6, r * 1.8);
+    fill.position.set(Math.cos(fa) * r * 0.5, 40, Math.sin(fa) * r * 0.5);
+    scene.add(fill); _arenaObjs.push(fill);
+  }
 
   // ── VOLUMETRIC SMOKE CLOUD particles around platform ─────────────────────
   const SMOKE_COUNT = _mob ? 500 : 1200;

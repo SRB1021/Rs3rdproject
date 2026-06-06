@@ -24,8 +24,9 @@ const CRACK_TIME   = 1.5;
 const FALL_WARN    = 0.3;
 const HEX_SIZE     = 26;
 
-const COLORS = ['#00f7ff','#ff6600','#00ff88','#ff00ff','#ffee00','#ff3355'];
-const BOT_NAMES = ['SARK','CLU','RINZLER','JARVIS','DYSON','ABRAXAS'];
+const COLORS = ['#00f7ff','#ff6600','#00ff88','#ff00ff','#ffee00','#ff3355','#ff88ff','#00ffcc','#ffaa00','#3399ff','#ff2222','#aaff00'];
+const BOT_NAMES = ['SARK','CLU','RINZLER','JARVIS','DYSON','ABRAXAS','CROM','BIT','RAM','YORI','DUMONT','TESLER'];
+const MAX_PLAYERS = 12;
 
 const rooms      = {};
 const socketRoom = {};
@@ -86,14 +87,24 @@ function genCode() {
   return c;
 }
 
+const POD_COUNT = 6;
+
 function spawnPosCircular(n, arena) {
   const cx=arena.width/2, cy=arena.height/2;
   const R=Math.min(arena.width,arena.height)*0.44;
-  const r=R*0.55;
+  // Place players at pod positions — 6 pods, 2 slots each, offset slightly
   const positions=[];
   for(let i=0;i<n;i++){
-    const angle=(i/n)*Math.PI*2 - Math.PI/2;
-    positions.push({x:cx+Math.cos(angle)*r, y:cy+Math.sin(angle)*r});
+    const pod = Math.floor(i / 2);              // which pod (0-5)
+    const slot = i % 2;                         // which slot in pod (0 or 1)
+    const podAngle = (pod / POD_COUNT) * Math.PI * 2 - Math.PI / 2;
+    const podR = R * 0.58;
+    const slotOffset = slot === 0 ? -18 : 18;   // side-by-side within pod
+    const perpAngle = podAngle + Math.PI / 2;
+    positions.push({
+      x: cx + Math.cos(podAngle)*podR + Math.cos(perpAngle)*slotOffset,
+      y: cy + Math.sin(podAngle)*podR + Math.sin(perpAngle)*slotOffset,
+    });
   }
   return positions;
 }
@@ -539,7 +550,7 @@ io.on('connection', socket=>{
   socket.on('joinRoom',({code,name})=>{
     const upper=String(code).toUpperCase().trim(), room=rooms[upper];
     if (!room) { socket.emit('joinError',{message:'Room not found.'}); return; }
-    if (Object.keys(room.players).length>=6) { socket.emit('joinError',{message:'Room is full (6 max).'}); return; }
+    if (Object.keys(room.players).length>=MAX_PLAYERS) { socket.emit('joinError',{message:`Room is full (${MAX_PLAYERS} max).`}); return; }
     const idx=Object.keys(room.players).length;
     const p=makePlayer(socket.id,idx,false);
     p.name=String(name||p.name).slice(0,18);
@@ -562,7 +573,7 @@ io.on('connection', socket=>{
     const room=rooms[code];
     if (room.hostId!==socket.id) return;
     if (room.state!=='lobby'&&room.state!=='gameOver') return;
-    if (Object.keys(room.players).length>=6) return;
+    if (Object.keys(room.players).length>=MAX_PLAYERS) return;
     const idx=Object.keys(room.players).length;
     const botId=`bot_${Date.now()}_${Math.random().toString(36).slice(2)}`;
     const bot=makePlayer(botId,idx,true);
