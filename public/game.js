@@ -80,7 +80,7 @@ function initThree() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.9;
+  renderer.toneMappingExposure = 1.1;
   renderer.outputEncoding = THREE.sRGBEncoding;
 
   scene = new THREE.Scene();
@@ -97,7 +97,7 @@ function initThree() {
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   pmrem.dispose();
 
-  scene.add(new THREE.AmbientLight(0x010206, 0.35));
+  scene.add(new THREE.AmbientLight(0x000204, 0.18));
 
   const dir = new THREE.DirectionalLight(0x4466aa, 0.12);
   dir.position.set(80, 500, 120);
@@ -164,8 +164,9 @@ function setupPostProcessing() {
   }
 
   // 3. HDR bloom — neon glow halos
-  const bloomStrength = isMobile ? 1.4 : 1.2;
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), bloomStrength, 0.55, 0.16));
+  // Strong bloom — neon circuit lines need to bleed light like TRON movie
+  const bloomStrength = isMobile ? 1.8 : 1.6;
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), bloomStrength, 0.45, 0.10));
 
   if (!isMobile) {
     // 4. Depth of field (desktop only)
@@ -204,12 +205,12 @@ function getHexGeo() {
   return _hexGeo;
 }
 const _matIntact = new THREE.MeshStandardMaterial({
-  color: 0x001a22, emissive: 0x00ddff, emissiveIntensity: 0.7,
-  roughness: 0.28, metalness: 0.9, envMapIntensity: 1.2
+  color: 0x000c14, emissive: 0x00eeff, emissiveIntensity: 1.4,
+  roughness: 0.12, metalness: 1.0, envMapIntensity: 2.5
 });
 const _matCracking = new THREE.MeshStandardMaterial({
-  color: 0x3a0d00, emissive: 0xff6600, emissiveIntensity: 1.1,
-  roughness: 0.35, metalness: 0.65, envMapIntensity: 0.8
+  color: 0x1a0400, emissive: 0xff5500, emissiveIntensity: 2.2,
+  roughness: 0.2, metalness: 0.8, envMapIntensity: 1.2
 });
 
 // ── Arena geometry ─────────────────────────────────────────────────────────
@@ -665,19 +666,26 @@ function makePlayerGroup(color) {
   const group = new THREE.Group();
   const col = new THREE.Color(color);
 
+  // Pure pitch-black suit — TRON programs are shadows with glowing lines
   const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0x020507, roughness: 0.15, metalness: 0.98, envMapIntensity: 1.8
+    color: 0x000000, roughness: 0.06, metalness: 1.0, envMapIntensity: 2.5
   });
   const armorMat = new THREE.MeshStandardMaterial({
-    color: 0x050b12, roughness: 0.08, metalness: 1.0, envMapIntensity: 2.2
+    color: 0x000000, roughness: 0.04, metalness: 1.0, envMapIntensity: 3.0
   });
+  // Glowing circuit lines — very bright, feed the bloom pass
   const glowMat = new THREE.MeshStandardMaterial({
-    color: col, emissive: col, emissiveIntensity: 1.6,
+    color: col, emissive: col, emissiveIntensity: 3.5,
+    roughness: 0.0, metalness: 0.0
+  });
+  // Secondary glow for thinner accent lines (slightly less intense)
+  const glowMat2 = new THREE.MeshStandardMaterial({
+    color: col, emissive: col, emissiveIntensity: 2.5,
     roughness: 0.0, metalness: 0.0
   });
   const visorMat = new THREE.MeshStandardMaterial({
-    color: 0xffffff, emissive: 0xddf4ff, emissiveIntensity: 1.8,
-    roughness: 0.0, metalness: 0.0, transparent: true, opacity: 0.88
+    color: col, emissive: col, emissiveIntensity: 4.0,
+    roughness: 0.0, metalness: 0.0, transparent: true, opacity: 0.95
   });
 
   function add(mesh, x, y, z) { mesh.position.set(x, y, z); group.add(mesh); return mesh; }
@@ -686,109 +694,134 @@ function makePlayerGroup(color) {
 
   // ── BOOTS ────────────────────────────────────────────────────────────────
   for (const ox of [-5, 5]) {
-    add(box(7, 5, 8, armorMat),     ox, -13, 0.5);   // boot block
-    add(box(7.5, 1, 9, glowMat),    ox, -10.5, 0.5); // ankle glow line
+    add(box(7, 5, 9, armorMat),      ox, -13, 0.5);
+    add(box(8, 1.5, 10, glowMat),    ox, -10.5, 0.5); // ankle glow band
+    add(box(7, 1.5, 9,  glowMat2),   ox, -15.2, 0.5); // toe glow
   }
 
   // ── LOWER LEGS ───────────────────────────────────────────────────────────
   for (const [ox, sx] of [[-5,-1],[5,1]]) {
-    add(box(6, 11, 6, bodyMat),       ox, -4.5, 0);   // shin
-    add(box(7, 2.5, 7, armorMat),     ox,  1.5, 0);   // knee armor
-    add(box(7.5, 1, 7.5, glowMat),    ox,  2.8, 0);   // knee glow cap
-    add(box(1, 9, 1, glowMat),        ox+sx*2.2, -4, 3.2); // shin stripe
+    add(box(6, 11, 6, bodyMat),         ox, -4.5, 0);
+    add(box(7.5, 2.5, 7.5, armorMat),   ox,  1.5, 0);   // knee cap
+    add(box(8.5, 1.5, 8.5, glowMat),    ox,  2.9, 0);   // knee glow ring
+    add(box(1.2, 9, 1.2, glowMat2),     ox+sx*2.5, -4, 3.2); // shin stripe
+    add(box(1.2, 9, 1.2, glowMat2),     ox-sx*0.5, -4, 3.5); // inner shin stripe
   }
 
   // ── UPPER LEGS ───────────────────────────────────────────────────────────
   for (const [ox, sx] of [[-5,-1],[5,1]]) {
-    add(box(7, 13, 7, bodyMat),      ox, 10.5, 0);    // thigh
-    add(box(7.5, 1, 7.5, glowMat),   ox, 17.2, 0);   // hip glow line
-    add(box(1, 11, 1, glowMat),      ox+sx*2.2, 10.5, 3.5); // thigh stripe
+    add(box(7, 13, 7, bodyMat),       ox, 10.5, 0);
+    add(box(8.5, 1.5, 8.5, glowMat),  ox, 17.4, 0);   // hip glow band
+    add(box(1.2, 11, 1.2, glowMat2),  ox+sx*2.5, 10.5, 3.5); // outer thigh stripe
   }
 
-  // ── WAIST / PELVIS ───────────────────────────────────────────────────────
-  add(box(15, 4, 8, armorMat),  0, 18.5, 0);
-  add(box(15, 1, 8.5, glowMat), 0, 20.8, 0);   // waist top glow
-  add(box(15, 1, 8.5, glowMat), 0, 16.5, 0);   // waist bottom glow
+  // ── WAIST / PELVIS ────────────────────────────────────────────────────────
+  add(box(16, 4, 9, armorMat),   0, 18.5, 0);
+  add(box(16, 1.5, 9.5, glowMat), 0, 21.0, 0);   // waist top band
+  add(box(16, 1.5, 9.5, glowMat), 0, 16.0, 0);   // waist bottom band
+  add(box(1.5, 4, 1.5, glowMat2), 0, 18.5, 5.0); // pelvis front pip
 
-  // ── TORSO ────────────────────────────────────────────────────────────────
-  add(box(15, 16, 8, bodyMat),   0, 29, 0);    // main torso
-  add(box(11, 12, 2, armorMat),  0, 29, 4.5);  // chest plate
+  // ── TORSO ─────────────────────────────────────────────────────────────────
+  add(box(15, 17, 8, bodyMat),    0, 29, 0);
+  add(box(12, 13, 2, armorMat),   0, 29, 4.5);   // chest plate
 
-  // Vertical center spine on chest
-  add(box(1.2, 16, 1, glowMat),  0, 29, 5.6);
-  // Horizontal chest lines
-  add(box(13, 1.2, 1, glowMat),  0, 33, 5.6);
-  add(box(11, 1.2, 1, glowMat),  0, 29, 5.6);
-  add(box(9,  1.2, 1, glowMat),  0, 25, 5.6);
+  // Vertical spine line
+  add(box(1.5, 17, 1.2, glowMat),  0, 29, 5.8);
+  // Horizontal chest circuit lines
+  add(box(14, 1.5, 1.2, glowMat),  0, 34.5, 5.8);
+  add(box(12, 1.5, 1.2, glowMat),  0, 29.5, 5.8);
+  add(box(10, 1.5, 1.2, glowMat),  0, 24.5, 5.8);
+  // Side torso lines
+  add(box(1.2, 12, 1.2, glowMat2), -8.5, 29, 3.5);
+  add(box(1.2, 12, 1.2, glowMat2),  8.5, 29, 3.5);
 
-  // Identity core circle on chest
-  const coreDisc = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 0.8, 20), glowMat);
+  // Identity core — bright glowing disc on chest
+  const coreDisc = new THREE.Mesh(new THREE.CylinderGeometry(2.8, 2.8, 1.0, 24), glowMat);
   coreDisc.rotation.x = Math.PI / 2;
-  add(coreDisc, 0, 29, 6.1);
-  const coreRing = new THREE.Mesh(new THREE.TorusGeometry(2.8, 0.5, 8, 24), glowMat);
-  add(coreRing, 0, 29, 5.8);
+  add(coreDisc, 0, 29, 6.3);
+  const coreRing = new THREE.Mesh(new THREE.TorusGeometry(3.6, 0.7, 10, 28), glowMat);
+  add(coreRing, 0, 29, 6.0);
+  const coreOuter = new THREE.Mesh(new THREE.TorusGeometry(4.8, 0.4, 8, 28), glowMat2);
+  add(coreOuter, 0, 29, 5.8);
 
-  // Back spine glow line
-  add(box(1.2, 16, 1, glowMat),  0, 29, -4.6);
+  // Back spine
+  add(box(1.5, 17, 1.2, glowMat),  0, 29, -4.8);
+  add(box(12, 1.5, 1.2, glowMat2), 0, 33, -4.8);
+  add(box(10, 1.5, 1.2, glowMat2), 0, 26, -4.8);
 
-  // ── SHOULDERS ────────────────────────────────────────────────────────────
-  for (const [ox, sx] of [[-10,-1],[10,1]]) {
-    add(box(6, 5, 9, armorMat),    ox, 35, 0);        // shoulder pad
-    add(box(6.5, 1, 9.5, glowMat), ox, 37.8, 0);      // shoulder top glow
-    add(box(6.5, 1, 9.5, glowMat), ox, 32.5, 0);      // shoulder bottom glow
+  // ── SHOULDERS ─────────────────────────────────────────────────────────────
+  for (const [ox] of [[-11],[11]]) {
+    add(box(7, 6, 10, armorMat),     ox, 35.5, 0);
+    add(box(8, 1.5, 11, glowMat),    ox, 38.5, 0);   // shoulder top band
+    add(box(8, 1.5, 11, glowMat),    ox, 32.5, 0);   // shoulder bottom band
+    add(box(1.5, 6, 1.5, glowMat2),  ox, 35.5, 5.5); // shoulder front pip
   }
 
-  // ── ARMS ─────────────────────────────────────────────────────────────────
-  for (const [ox, sx] of [[-10,-1],[10,1]]) {
-    add(box(5.5, 12, 5.5, bodyMat),   ox, 26, 0);     // upper arm
-    add(box(6, 2.5, 6.5, armorMat),   ox, 20, 0);     // elbow armor
-    add(box(6.5, 1, 7, glowMat),      ox, 21.5, 0);   // elbow top glow
-    add(box(6.5, 1, 7, glowMat),      ox, 18.5, 0);   // elbow bottom glow
-    add(box(5, 10, 5, bodyMat),        ox, 13, 0);    // forearm
-    add(box(5.5, 1, 5.5, glowMat),    ox, 8.5, 0);   // wrist glow
-    // Arm circuit stripe
-    add(box(1, 10, 1, glowMat),  ox+sx*1.8, 26, 3);
-    add(box(1, 8, 1, glowMat),   ox+sx*1.8, 13, 2.8);
+  // ── ARMS ──────────────────────────────────────────────────────────────────
+  for (const [ox, sx] of [[-10.5,-1],[10.5,1]]) {
+    add(box(5.5, 12, 5.5, bodyMat),   ox, 26, 0);
+    add(box(6.5, 3, 7, armorMat),     ox, 20, 0);    // elbow
+    add(box(7.5, 1.5, 8, glowMat),    ox, 21.8, 0);  // elbow top band
+    add(box(7.5, 1.5, 8, glowMat),    ox, 18.2, 0);  // elbow bottom band
+    add(box(5, 10, 5, bodyMat),        ox, 13, 0);
+    add(box(6, 1.5, 6, glowMat),      ox, 8.5, 0);   // wrist band
+    add(box(6, 1.5, 6, glowMat2),     ox, 7.0, 0);   // wrist band 2
+    add(box(1.2, 10, 1.2, glowMat2),  ox+sx*2.0, 26, 3.2); // outer arm stripe
+    add(box(1.2, 8,  1.2, glowMat2),  ox+sx*2.0, 13, 3.0); // forearm stripe
   }
 
-  // ── NECK ─────────────────────────────────────────────────────────────────
-  add(cyl(3, 3.5, 5, 8, bodyMat), 0, 39.5, 0);
+  // ── NECK ──────────────────────────────────────────────────────────────────
+  add(cyl(2.8, 3.5, 5, 8, bodyMat), 0, 39.5, 0);
+  add(new THREE.Mesh(new THREE.TorusGeometry(3.2, 0.5, 8, 20), glowMat2), 0, 37.5, 0);
 
-  // ── HELMET ───────────────────────────────────────────────────────────────
-  const helmetBase = new THREE.Mesh(new THREE.SphereGeometry(7.5, 20, 14), armorMat);
-  helmetBase.scale.set(0.94, 0.9, 1.0);
+  // ── HELMET ────────────────────────────────────────────────────────────────
+  const helmetBase = new THREE.Mesh(new THREE.SphereGeometry(7.8, 22, 16), armorMat);
+  helmetBase.scale.set(0.95, 0.88, 1.02);
   add(helmetBase, 0, 48, 0);
 
-  // Visor — bright glowing horizontal slit
-  const visorMesh = box(13, 3.5, 2.5, visorMat);
-  add(visorMesh, 0, 48.2, 7.5);
+  // Helmet circuit lines
+  add(box(1.5, 8, 1.5, glowMat),   0, 54, 5.5);    // top fin
+  for (const ox of [-7, 7]) {
+    add(box(1.2, 11, 1.2, glowMat2), ox, 49, 2.5); // side lines
+  }
+  // Helmet back band
+  add(box(12, 1.5, 1.5, glowMat2), 0, 54.5, -3);
 
-  // Visor bright core
-  const visorCore = box(9, 2, 1, new THREE.MeshStandardMaterial({
-    color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2.5,
+  // Visor — full colored bright slit (the most iconic TRON feature)
+  const visorMesh = box(14, 3.5, 3, visorMat);
+  add(visorMesh, 0, 48.2, 7.2);
+  // Inner visor core — pure white hot center
+  add(box(10, 2, 1.2, new THREE.MeshStandardMaterial({
+    color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 5.0,
     roughness: 0, metalness: 0
-  }));
-  add(visorCore, 0, 48.2, 8.8);
+  })), 0, 48.2, 8.8);
 
-  // Helmet top glow stripe
-  add(box(1.5, 7, 1.5, glowMat), 0, 53.5, 5.5);
-  // Helmet side glow lines
-  for (const ox of [-6.5, 6.5]) add(box(1, 10, 1, glowMat), ox, 48.5, 3);
-
-  // ── IDENTITY DISC (on back, the signature TRON disc) ─────────────────────
-  const discBody = new THREE.Mesh(new THREE.CylinderGeometry(8.5, 8.5, 2.5, 28), armorMat);
+  // ── IDENTITY DISC (on back) ───────────────────────────────────────────────
+  const discBody = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 2.5, 32), armorMat);
   discBody.rotation.x = Math.PI / 2;
-  add(discBody, 0, 29, -8.5);
+  add(discBody, 0, 30, -9);
 
-  const discGlow = new THREE.Mesh(new THREE.TorusGeometry(8.5, 1.2, 8, 36), glowMat);
-  add(discGlow, 0, 29, -8.5);
+  const discRim = new THREE.Mesh(new THREE.TorusGeometry(9, 1.5, 10, 40), glowMat);
+  add(discRim, 0, 30, -9);
 
-  const discCenter = new THREE.Mesh(new THREE.CylinderGeometry(3, 3, 0.8, 16), glowMat);
+  const discMid = new THREE.Mesh(new THREE.TorusGeometry(6, 0.8, 8, 32), glowMat2);
+  add(discMid, 0, 30, -9.5);
+
+  const discCenter = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.2, 1, 20), glowMat);
   discCenter.rotation.x = Math.PI / 2;
-  add(discCenter, 0, 29, -10);
+  add(discCenter, 0, 30, -10.5);
 
-  const discInnerRing = new THREE.Mesh(new THREE.TorusGeometry(5.5, 0.6, 6, 28), glowMat);
-  add(discInnerRing, 0, 29, -10);
+  // ── CHARACTER POINT LIGHT — circuit lines illuminate the floor ────────────
+  const bodyLight = new THREE.PointLight(col, 1.6, 120);
+  bodyLight.position.set(0, 20, 0);
+  group.add(bodyLight);
+
+  // Visor light — colored beam forward from face
+  const visorLight = new THREE.SpotLight(col, 1.0, 80, Math.PI / 5, 0.6, 2.0);
+  visorLight.position.set(0, 48, 8);
+  visorLight.target.position.set(0, 20, 80);
+  group.add(visorLight);
+  group.add(visorLight.target);
 
   return group;
 }
