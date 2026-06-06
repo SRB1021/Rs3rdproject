@@ -80,7 +80,7 @@ function initThree() {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.1;
+  renderer.toneMappingExposure = 0.85;
   renderer.outputEncoding = THREE.sRGBEncoding;
 
   scene = new THREE.Scene();
@@ -97,9 +97,9 @@ function initThree() {
   scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
   pmrem.dispose();
 
-  scene.add(new THREE.AmbientLight(0x000204, 0.18));
+  scene.add(new THREE.AmbientLight(0x0a1a2a, 0.7));
 
-  const dir = new THREE.DirectionalLight(0x4466aa, 0.12);
+  const dir = new THREE.DirectionalLight(0x5577aa, 0.5);
   dir.position.set(80, 500, 120);
   dir.castShadow = true;
   dir.shadow.mapSize.set(2048, 2048);
@@ -164,9 +164,8 @@ function setupPostProcessing() {
   }
 
   // 3. HDR bloom — neon glow halos
-  // Strong bloom — neon circuit lines need to bleed light like TRON movie
-  const bloomStrength = isMobile ? 1.8 : 1.6;
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), bloomStrength, 0.45, 0.10));
+  const bloomStrength = isMobile ? 1.0 : 0.85;
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(w, h), bloomStrength, 0.5, 0.22));
 
   if (!isMobile) {
     // 4. Depth of field (desktop only)
@@ -205,12 +204,12 @@ function getHexGeo() {
   return _hexGeo;
 }
 const _matIntact = new THREE.MeshStandardMaterial({
-  color: 0x000c14, emissive: 0x00eeff, emissiveIntensity: 1.4,
-  roughness: 0.12, metalness: 1.0, envMapIntensity: 2.5
+  color: 0x001520, emissive: 0x00ccee, emissiveIntensity: 0.6,
+  roughness: 0.2, metalness: 0.9, envMapIntensity: 1.8
 });
 const _matCracking = new THREE.MeshStandardMaterial({
-  color: 0x1a0400, emissive: 0xff5500, emissiveIntensity: 2.2,
-  roughness: 0.2, metalness: 0.8, envMapIntensity: 1.2
+  color: 0x2a0800, emissive: 0xff4400, emissiveIntensity: 1.0,
+  roughness: 0.3, metalness: 0.7, envMapIntensity: 1.0
 });
 
 // ── Arena geometry ─────────────────────────────────────────────────────────
@@ -675,17 +674,16 @@ function makePlayerGroup(color) {
   });
   // Glowing circuit lines — very bright, feed the bloom pass
   const glowMat = new THREE.MeshStandardMaterial({
-    color: col, emissive: col, emissiveIntensity: 3.5,
+    color: col, emissive: col, emissiveIntensity: 1.8,
     roughness: 0.0, metalness: 0.0
   });
-  // Secondary glow for thinner accent lines (slightly less intense)
   const glowMat2 = new THREE.MeshStandardMaterial({
-    color: col, emissive: col, emissiveIntensity: 2.5,
+    color: col, emissive: col, emissiveIntensity: 1.2,
     roughness: 0.0, metalness: 0.0
   });
   const visorMat = new THREE.MeshStandardMaterial({
-    color: col, emissive: col, emissiveIntensity: 4.0,
-    roughness: 0.0, metalness: 0.0, transparent: true, opacity: 0.95
+    color: col, emissive: col, emissiveIntensity: 2.2,
+    roughness: 0.0, metalness: 0.0, transparent: true, opacity: 0.92
   });
 
   function add(mesh, x, y, z) { mesh.position.set(x, y, z); group.add(mesh); return mesh; }
@@ -792,9 +790,9 @@ function makePlayerGroup(color) {
   add(visorMesh, 0, 48.2, 7.2);
   // Inner visor core — pure white hot center
   add(box(10, 2, 1.2, new THREE.MeshStandardMaterial({
-    color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 5.0,
+    color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2.5,
     roughness: 0, metalness: 0
-  })), 0, 48.2, 8.8);
+  })), 0, 48.2, 8.6);
 
   // ── IDENTITY DISC (on back) ───────────────────────────────────────────────
   const discBody = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 2.5, 32), armorMat);
@@ -812,7 +810,7 @@ function makePlayerGroup(color) {
   add(discCenter, 0, 30, -10.5);
 
   // ── CHARACTER POINT LIGHT — circuit lines illuminate the floor ────────────
-  const bodyLight = new THREE.PointLight(col, 1.6, 120);
+  const bodyLight = new THREE.PointLight(col, 0.8, 90);
   bodyLight.position.set(0, 20, 0);
   group.add(bodyLight);
 
