@@ -156,6 +156,31 @@ const ChromaticAberrationShader = {
   `
 };
 
+// Cinematic colour grade — cool cyan shadows, warm orange highlights (Tron movie look)
+const ColorGradeShader = {
+  uniforms: {
+    tDiffuse: { value: null },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    varying vec2 vUv;
+    void main() {
+      vec4 c = texture2D(tDiffuse, vUv);
+      float lum = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+      vec3 shadowTint    = vec3(0.55, 0.85, 1.05);
+      vec3 highlightTint = vec3(1.08, 0.95, 0.78);
+      vec3 graded = c.rgb * mix(shadowTint, highlightTint, smoothstep(0.15, 0.85, lum));
+      // gentle contrast curve
+      graded = (graded - 0.5) * 1.06 + 0.5;
+      gl_FragColor = vec4(clamp(graded, 0.0, 1.0), c.a);
+    }
+  `
+};
+
 function setupPostProcessing() {
   const {
     EffectComposer, RenderPass, UnrealBloomPass,
@@ -193,6 +218,9 @@ function setupPostProcessing() {
   // 7. Film grain
   composer.addPass(new FilmPass(isMobile ? 0.15 : 0.22, 0.0, 648, false));
 
+  // 7b. Cinematic colour grade — Tron movie cyan/orange look
+  composer.addPass(new ShaderPass(ColorGradeShader));
+
   // 8. Vignette
   const vignette = new ShaderPass(VignetteShader);
   vignette.uniforms['offset'].value = isMobile ? 0.75 : 0.80;
@@ -224,6 +252,56 @@ const _matCracking = new THREE.MeshStandardMaterial({
   roughness: 0.3, metalness: 0.7, envMapIntensity: 1.0
 });
 
+// ── Procedural textures ─────────────────────────────────────────────────────
+let _gridTex = null;
+function getGridTexture() {
+  if (_gridTex) return _gridTex;
+  const size = 1024;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#000305';
+  ctx.fillRect(0, 0, size, size);
+  ctx.strokeStyle = 'rgba(0,210,255,0.5)';
+  ctx.lineWidth = 2;
+  const cells = 24, step = size / cells;
+  for (let i = 0; i <= cells; i++) {
+    ctx.beginPath(); ctx.moveTo(i * step, 0); ctx.lineTo(i * step, size); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * step); ctx.lineTo(size, i * step); ctx.stroke();
+  }
+  _gridTex = new THREE.CanvasTexture(c);
+  _gridTex.wrapS = _gridTex.wrapT = THREE.RepeatWrapping;
+  _gridTex.repeat.set(8, 8);
+  return _gridTex;
+}
+
+let _flareTex = null;
+function getFlareTexture() {
+  if (_flareTex) return _flareTex;
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+  g.addColorStop(0, 'rgba(255,255,255,1)');
+  g.addColorStop(0.25, 'rgba(180,220,255,0.6)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  _flareTex = new THREE.CanvasTexture(c);
+  return _flareTex;
+}
+
+function makeFlareSprite(color, scale) {
+  const mat = new THREE.SpriteMaterial({
+    map: getFlareTexture(), color, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false
+  });
+  const s = new THREE.Sprite(mat);
+  s.scale.set(scale, scale, 1);
+  return s;
+}
+
 // ── Arena geometry ─────────────────────────────────────────────────────────
 let _arenaObjs = [];
 let _smokeParts = null, _smokeVels = null;
@@ -242,7 +320,8 @@ function buildArena(r) {
   floorMesh = new THREE.Mesh(
     new THREE.CircleGeometry(r + 22, 80),
     new THREE.MeshStandardMaterial({
-      color: 0x000204, roughness: 0.02, metalness: 1.0, envMapIntensity: 3.0
+      color: 0x000204, roughness: 0.04, metalness: 1.0, envMapIntensity: 3.0,
+      map: getGridTexture(), emissiveMap: getGridTexture(), emissive: 0x113344, emissiveIntensity: 0.4
     })
   );
   floorMesh.rotation.x = -Math.PI / 2;
@@ -485,7 +564,17 @@ function buildArena(r) {
     const ray = new THREE.Mesh(new THREE.ConeGeometry(rayR, rayH, 10, 1, true), godRayMat);
     ray.position.set(sx * 0.8, SPOT_H / 2, sz * 0.8);
     scene.add(ray); _arenaObjs.push(ray);
+
+    // Lens flare sprite at the lamp
+    const flare = makeFlareSprite(0xaaddff, r * 0.55);
+    flare.position.set(sx, SPOT_H, sz);
+    scene.add(flare); _arenaObjs.push(flare);
   }
+
+  // Big ring lens flare
+  const ringFlare = makeFlareSprite(0xddeeff, r * 0.9);
+  ringFlare.position.set(0, BIG_RING_Y, 0);
+  scene.add(ringFlare); _arenaObjs.push(ringFlare);
 
   // ── Arena pods — large floating rectangular panels around combat ring ────────
   // Matches the TRON disc wars arena: dark box pods with glowing cyan edges
@@ -849,6 +938,7 @@ function makePlayerGroup(color) {
 function getOrMakePlayerMesh(id, color, isMe) {
   if (playerMeshes[id]) return playerMeshes[id];
   const g = makePlayerGroup(color);
+  g.userData.bobSeed = Math.random() * Math.PI * 2;
   if (isMe) g.visible = false;
   g.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
   scene.add(g);
@@ -986,13 +1076,37 @@ function animateExplosions(dt) {
     const pa = e.pts.geometry.attributes.position;
     for (let j = 0; j < e.vel.length; j++) {
       pa.array[j*3]   += e.vel[j].vx * dt;
-      pa.array[j*3+1] += e.vel[j].vy * dt - 120 * dt * t;
+      pa.array[j*3+1] += e.vel[j].vy * dt - (e.gravity || 120) * dt * t;
       pa.array[j*3+2] += e.vel[j].vz * dt;
     }
     pa.needsUpdate = true;
     e.pts.material.opacity = 1 - t;
     e.flash.intensity = 5.0 * (1 - t * t);
   }
+}
+
+// ── Tile destruction debris ────────────────────────────────────────────────
+function spawnTileDebris(sx, sz) {
+  const COUNT = 18;
+  const pos = new Float32Array(COUNT * 3);
+  const vel = [];
+  for (let i = 0; i < COUNT; i++) {
+    pos[i*3]   = sx + (Math.random()-0.5)*16;
+    pos[i*3+1] = 1  + Math.random()*6;
+    pos[i*3+2] = sz + (Math.random()-0.5)*16;
+    vel.push({ vx:(Math.random()-0.5)*60, vy:40+Math.random()*120, vz:(Math.random()-0.5)*60 });
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+    color: 0xff6600, size: 5, sizeAttenuation: true,
+    transparent: true, opacity: 1.0, depthWrite: false, blending: THREE.AdditiveBlending
+  }));
+  scene.add(pts);
+  const flash = new THREE.PointLight(0xff6600, 2.5, 120);
+  flash.position.set(sx, 8, sz);
+  scene.add(flash);
+  activeExplosions.push({ pts, pos, vel, flash, age: 0, dur: 0.9, gravity: 220 });
 }
 
 // ── Dead body silhouette ───────────────────────────────────────────────────
@@ -1265,7 +1379,8 @@ function updateScene() {
     if (!p.alive) return;
 
     const s = toScene(p.x, p.y);
-    group.position.set(s.x, 0, s.z);
+    const bob = Math.sin(_discRot * 0.6 + (group.userData.bobSeed || 0)) * 1.2;
+    group.position.set(s.x, bob, s.z);
     group.rotation.y = Math.atan2(p.facing.x, p.facing.y);
 
     if (p.hasDisc) {
@@ -1536,6 +1651,7 @@ socket.on('gameState', ({ players: ps, bodies: b, arena: a, state, changedTiles,
       if (!t || t.state === ts) return;
       t.state = ts;
       spawnTileMesh(id, t.wx, t.wz, ts);
+      if (ts === 2) spawnTileDebris(t.wx, t.wz);
     });
   }
 
