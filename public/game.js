@@ -579,7 +579,7 @@ function buildArena(r) {
   // ── Arena pods — large floating rectangular panels around combat ring ────────
   // Matches the TRON disc wars arena: dark box pods with glowing cyan edges
   const POD_COUNT = 6;
-  const POD_W = r * 0.55, POD_H = r * 0.45, POD_D = 28;
+  const POD_W = r * 0.36, POD_H = r * 0.30, POD_D = 20;
   const POD_R  = r * 1.08;   // radius from center
   const POD_Y  = 60;          // mid-height
 
