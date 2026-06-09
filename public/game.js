@@ -31,6 +31,13 @@ const discMeshes   = {};
 const tileMeshes   = {};
 const tileData     = new Map();
 let rimMesh = null, wallMesh = null, floorMesh = null;
+let _bigRings = [];   // tracked for slow rotation
+
+// ── Effects systems ───────────────────────────────────────────────────────
+const discTrails  = {};   // ownerId → { pts, positions, head }
+const activeExplosions = [];
+let   _shakeAmp = 0;
+const TRAIL_LEN = 28;
 
 // ── Camera / pointer lock ─────────────────────────────────────────────────
 // yaw=0 → camera looks along Three.js -Z → server facing (0,-1)
@@ -102,13 +109,18 @@ function initThree() {
   const dir = new THREE.DirectionalLight(0x6688bb, 0.65);
   dir.position.set(80, 500, 120);
   dir.castShadow = true;
-  dir.shadow.mapSize.set(2048, 2048);
-  dir.shadow.camera.near = 1; dir.shadow.camera.far = 1500;
-  dir.shadow.camera.left = dir.shadow.camera.bottom = -700;
-  dir.shadow.camera.right = dir.shadow.camera.top = 700;
-  dir.shadow.bias = -0.0008;
-  dir.shadow.radius = 3;
+  dir.shadow.mapSize.set(4096, 4096);
+  dir.shadow.camera.near = 1; dir.shadow.camera.far = 1800;
+  dir.shadow.camera.left = dir.shadow.camera.bottom = -800;
+  dir.shadow.camera.right = dir.shadow.camera.top = 800;
+  dir.shadow.bias = -0.0005;
+  dir.shadow.radius = 2;
   scene.add(dir);
+
+  // Subtle counter-fill from below
+  const fill = new THREE.DirectionalLight(0x002244, 0.25);
+  fill.position.set(-60, -80, -100);
+  scene.add(fill);
 
   resizeRenderer();
   window.addEventListener('resize', resizeRenderer);
@@ -220,6 +232,7 @@ function buildArena(r) {
   _arenaObjs.forEach(o => scene.remove(o));
   _arenaObjs = [];
   _smokeParts = null;
+  _bigRings = [];
   [rimMesh, wallMesh, floorMesh].forEach(m => { if (m) scene.remove(m); });
 
   r = r || 480;
@@ -407,6 +420,7 @@ function buildArena(r) {
   bigRingGlow.rotation.x = Math.PI / 2;
   bigRingGlow.position.y = BIG_RING_Y;
   scene.add(bigRingGlow); _arenaObjs.push(bigRingGlow);
+  _bigRings.push(bigRingOuter, bigRingGlow);
 
   // Inner accent ring
   const bigRingInner = new THREE.Mesh(
@@ -855,23 +869,43 @@ function getOrMakeDiscMesh(ownerId, color) {
 
   const group = new THREE.Group();
   const col = new THREE.Color(color || '#00f7ff');
+  const emitMat = c => new THREE.MeshStandardMaterial({ color: c, emissive: c, emissiveIntensity: 3.0, roughness: 0, metalness: 0 });
 
-  const mesh = new THREE.Mesh(
-    new THREE.CylinderGeometry(11, 11, 3, 32),
-    new THREE.MeshStandardMaterial({
-      color: col, emissive: col, emissiveIntensity: 2.0,
-      roughness: 0.02, metalness: 0.95,
-      envMapIntensity: 2.0, transparent: true, opacity: 0.93
-    })
+  // Dark metallic body
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(11, 11, 2.2, 40),
+    new THREE.MeshStandardMaterial({ color: 0x000810, roughness: 0.02, metalness: 1.0, envMapIntensity: 3.0 })
   );
-  group.add(mesh);
+  group.add(body);
 
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(11, 1.8, 8, 32),
-    new THREE.MeshBasicMaterial({ color: col })
+  // Outer rim — brightest
+  const rim = new THREE.Mesh(new THREE.TorusGeometry(11, 1.8, 10, 48), emitMat(col));
+  rim.rotation.x = Math.PI / 2;
+  group.add(rim);
+
+  // Mid ring
+  const mid = new THREE.Mesh(new THREE.TorusGeometry(7.5, 0.9, 8, 36), emitMat(col));
+  mid.rotation.x = Math.PI / 2;
+  group.add(mid);
+  group.userData.midRing = mid;
+
+  // Inner ring (counter-rotates)
+  const inner = new THREE.Mesh(new THREE.TorusGeometry(4.2, 0.6, 8, 28), emitMat(col));
+  inner.rotation.x = Math.PI / 2;
+  group.add(inner);
+  group.userData.innerRing = inner;
+
+  // White-hot center core
+  const core = new THREE.Mesh(
+    new THREE.CylinderGeometry(2.2, 2.2, 0.8, 20),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 5.0, roughness: 0, metalness: 0 })
   );
-  ring.rotation.x = Math.PI / 2;
-  group.add(ring);
+  group.add(core);
+
+  // Disc PointLight — illuminates floor and players as it flies
+  const dLight = new THREE.PointLight(col, 3.0, 200);
+  group.add(dLight);
+  group.userData.dLight = dLight;
 
   scene.add(group);
   discMeshes[ownerId] = group;
@@ -883,6 +917,82 @@ function removeDiscMesh(ownerId) {
   if (!g) return;
   scene.remove(g);
   delete discMeshes[ownerId];
+}
+
+// ── Disc trail ────────────────────────────────────────────────────────────
+function getOrMakeTrail(ownerId, color) {
+  if (discTrails[ownerId]) return discTrails[ownerId];
+  const positions = new Float32Array(TRAIL_LEN * 3);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+    color: new THREE.Color(color), size: 16, sizeAttenuation: true,
+    transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending
+  }));
+  scene.add(pts);
+  discTrails[ownerId] = { pts, positions, head: 0 };
+  return discTrails[ownerId];
+}
+
+function updateTrail(ownerId, x, y, z, color) {
+  const t = getOrMakeTrail(ownerId, color);
+  const ci = t.head * 3;
+  t.positions[ci] = x; t.positions[ci+1] = y; t.positions[ci+2] = z;
+  t.head = (t.head + 1) % TRAIL_LEN;
+  t.pts.geometry.attributes.position.needsUpdate = true;
+  t.pts.visible = true;
+}
+
+function hideTrail(ownerId) { if (discTrails[ownerId]) discTrails[ownerId].pts.visible = false; }
+
+function removeTrail(ownerId) {
+  if (!discTrails[ownerId]) return;
+  scene.remove(discTrails[ownerId].pts);
+  delete discTrails[ownerId];
+}
+
+// ── Derezz explosion ──────────────────────────────────────────────────────
+function spawnDerezzEffect(sx, sz, color) {
+  const col = new THREE.Color(color);
+  const COUNT = 80;
+  const pos = new Float32Array(COUNT * 3);
+  const vel = [];
+  for (let i = 0; i < COUNT; i++) {
+    pos[i*3]   = sx + (Math.random()-0.5)*12;
+    pos[i*3+1] = 5  + Math.random()*35;
+    pos[i*3+2] = sz + (Math.random()-0.5)*12;
+    vel.push({ vx:(Math.random()-0.5)*220, vy:30+Math.random()*160, vz:(Math.random()-0.5)*220 });
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+    color: col, size: 8, sizeAttenuation: true,
+    transparent: true, opacity: 1.0, depthWrite: false, blending: THREE.AdditiveBlending
+  }));
+  scene.add(pts);
+  const flash = new THREE.PointLight(col, 5.0, 300);
+  flash.position.set(sx, 25, sz);
+  scene.add(flash);
+  activeExplosions.push({ pts, pos, vel, flash, age: 0, dur: 1.4 });
+  _shakeAmp = Math.max(_shakeAmp, 3.5);
+}
+
+function animateExplosions(dt) {
+  for (let i = activeExplosions.length - 1; i >= 0; i--) {
+    const e = activeExplosions[i];
+    e.age += dt;
+    const t = e.age / e.dur;
+    if (t >= 1) { scene.remove(e.pts); scene.remove(e.flash); activeExplosions.splice(i, 1); continue; }
+    const pa = e.pts.geometry.attributes.position;
+    for (let j = 0; j < e.vel.length; j++) {
+      pa.array[j*3]   += e.vel[j].vx * dt;
+      pa.array[j*3+1] += e.vel[j].vy * dt - 120 * dt * t;
+      pa.array[j*3+2] += e.vel[j].vz * dt;
+    }
+    pa.needsUpdate = true;
+    e.pts.material.opacity = 1 - t;
+    e.flash.intensity = 5.0 * (1 - t * t);
+  }
 }
 
 // ── Dead body silhouette ───────────────────────────────────────────────────
@@ -1102,38 +1212,51 @@ function updateCamera() {
   camera.rotation.y = yaw;
   camera.rotation.x = pitch;
   const s = toScene(me.x, me.y);
-  camera.position.set(s.x, EYE_H, s.z);
+  let cx = s.x, cy = EYE_H, cz = s.z;
+  if (_shakeAmp > 0.05) {
+    cx += (Math.random()-0.5) * _shakeAmp;
+    cy += (Math.random()-0.5) * _shakeAmp * 0.4;
+    cz += (Math.random()-0.5) * _shakeAmp;
+    _shakeAmp *= 0.80;
+  }
+  camera.position.set(cx, cy, cz);
 }
 
 // ── Update scene from server state ────────────────────────────────────────
 let _discRot = 0;
 function updateScene() {
-  _discRot += 0.06;
+  _discRot += 0.07;
   const seenDiscs = new Set();
 
   Object.values(players).forEach(p => {
     const group = getOrMakePlayerMesh(p.id, p.color, p.id === myId);
 
     if (p.id === myId) {
-      // Own body hidden in first-person; still placed for shadow
       const s = toScene(p.x, p.y);
       group.position.set(s.x, 0, s.z);
 
-      // Show held disc at arm level
       if (p.hasDisc) {
         seenDiscs.add(p.id);
         const dm = getOrMakeDiscMesh(p.id, p.color);
-        // right = (cos(yaw), -sin(yaw)) in Three.js xz plane
-      dm.position.set(s.x + Math.cos(yaw) * 12, EYE_H - 12, s.z - Math.sin(yaw) * 12);
+        dm.visible = true;
+        dm.position.set(s.x + Math.cos(yaw) * 12, EYE_H - 12, s.z - Math.sin(yaw) * 12);
         dm.rotation.y = _discRot;
+        if (dm.userData.midRing)   dm.userData.midRing.rotation.z   =  _discRot * 1.3;
+        if (dm.userData.innerRing) dm.userData.innerRing.rotation.z = -_discRot * 2.1;
+        hideTrail(p.id);
       }
-      // Disc in flight
       if (p.disc) {
         seenDiscs.add(p.id);
         const ds = toScene(p.disc.x, p.disc.y);
         const dm = getOrMakeDiscMesh(p.id, p.color);
+        dm.visible = true;
         dm.position.set(ds.x, DISC_FLY_H, ds.z);
         dm.rotation.y = _discRot;
+        if (dm.userData.midRing)   dm.userData.midRing.rotation.z   =  _discRot * 1.3;
+        if (dm.userData.innerRing) dm.userData.innerRing.rotation.z = -_discRot * 2.1;
+        // pulse disc light
+        if (dm.userData.dLight) dm.userData.dLight.intensity = 2.5 + Math.sin(_discRot * 8) * 0.5;
+        updateTrail(p.id, ds.x, DISC_FLY_H, ds.z, p.color);
       }
       return;
     }
@@ -1149,21 +1272,29 @@ function updateScene() {
       seenDiscs.add(p.id);
       const angle = Math.atan2(p.facing.x, p.facing.y);
       const dm = getOrMakeDiscMesh(p.id, p.color);
+      dm.visible = true;
       dm.position.set(s.x + Math.cos(angle) * 10, 22, s.z - Math.sin(angle) * 10);
       dm.rotation.y = _discRot;
+      if (dm.userData.midRing)   dm.userData.midRing.rotation.z   =  _discRot * 1.3;
+      if (dm.userData.innerRing) dm.userData.innerRing.rotation.z = -_discRot * 2.1;
+      hideTrail(p.id);
     } else if (p.disc) {
       seenDiscs.add(p.id);
       const ds = toScene(p.disc.x, p.disc.y);
       const dm = getOrMakeDiscMesh(p.id, p.color);
+      dm.visible = true;
       dm.position.set(ds.x, DISC_FLY_H, ds.z);
       dm.rotation.y = _discRot;
+      if (dm.userData.midRing)   dm.userData.midRing.rotation.z   =  _discRot * 1.3;
+      if (dm.userData.innerRing) dm.userData.innerRing.rotation.z = -_discRot * 2.1;
+      if (dm.userData.dLight) dm.userData.dLight.intensity = 2.5 + Math.sin(_discRot * 8) * 0.5;
+      updateTrail(p.id, ds.x, DISC_FLY_H, ds.z, p.color);
     }
   });
 
-  // Remove stale player meshes; hide discs rather than delete them
   Object.keys(playerMeshes).forEach(id => { if (!players[id]) removePlayerMesh(id); });
   Object.keys(discMeshes).forEach(id => {
-    if (!seenDiscs.has(id)) discMeshes[id].visible = false;
+    if (!seenDiscs.has(id)) { discMeshes[id].visible = false; hideTrail(id); }
   });
 }
 
@@ -1180,13 +1311,16 @@ function animateTiles(ts) {
 }
 
 // ── Render loop ────────────────────────────────────────────────────────────
+let _lastTs = 0;
 function gameLoop(ts) {
   animId = requestAnimationFrame(gameLoop);
+  const dt = Math.min((ts - _lastTs) / 1000, 0.05); _lastTs = ts;
   sendInput();
   updateCamera();
   updateScene();
   animateTiles(ts);
   animateArena(ts);
+  animateExplosions(dt);
   if (composer) composer.render(); else renderer.render(scene, camera);
 }
 
@@ -1229,6 +1363,8 @@ function animateArena(ts) {
     // Slowly rotate the whole smoke field
     _smokeParts.rotation.y += 0.0003;
   }
+  // Slowly rotate the big ring overhead
+  _bigRings.forEach(m => { m.rotation.z += 0.00028; });
 }
 
 function startLoop() {
@@ -1419,13 +1555,17 @@ socket.on('playerEliminated', ({ id, killerName }) => {
   const p = players[id];
   if (p) {
     p.alive = false;
+    const s = toScene(p.x, p.y);
+    spawnDerezzEffect(s.x, s.z, p.color);
     spawnBodyMesh({ x: p.x, y: p.y, color: p.color });
   }
   addKillFeed(killerName || 'VOID', p?.name || id);
   if (id === myId && pointerLocked) document.exitPointerLock();
 });
 
-socket.on('discThrown', ({ playerId }) => { if (playerId !== myId) Audio.throwDisc(); });
+socket.on('discThrown', ({ playerId }) => {
+  if (playerId !== myId) { Audio.throwDisc(); _shakeAmp = Math.max(_shakeAmp, 0.6); }
+});
 socket.on('discCaught', ({ playerId }) => { if (playerId === myId) Audio.discCatch(); });
 
 socket.on('gameOver', ({ winnerId, winnerName }) => {
