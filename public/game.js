@@ -32,6 +32,7 @@ const tileMeshes   = {};
 const tileData     = new Map();
 let rimMesh = null, wallMesh = null, floorMesh = null;
 let _bigRings = [];   // tracked for slow rotation
+let _pods = [];        // tracked for floating animation
 
 // ── Effects systems ───────────────────────────────────────────────────────
 const discTrails  = {};   // ownerId → { pts, positions, head }
@@ -306,11 +307,12 @@ function makeFlareSprite(color, scale) {
 let _arenaObjs = [];
 let _smokeParts = null, _smokeVels = null;
 
-function buildArena(r) {
+function buildArena(r, isFinal) {
   _arenaObjs.forEach(o => scene.remove(o));
   _arenaObjs = [];
   _smokeParts = null;
   _bigRings = [];
+  _pods = [];
   [rimMesh, wallMesh, floorMesh].forEach(m => { if (m) scene.remove(m); });
 
   r = r || 480;
@@ -578,10 +580,14 @@ function buildArena(r) {
 
   // ── Arena pods — large floating rectangular panels around combat ring ────────
   // Matches the TRON disc wars arena: dark box pods with glowing cyan edges
-  const POD_COUNT = 6;
-  const POD_W = r * 0.36, POD_H = r * 0.30, POD_D = 20;
+  // In the final battle, the individual pods merge into one continuous ring platform
+  const POD_COUNT = isFinal ? 24 : 6;
+  const POD_H = r * 0.30, POD_D = 20;
   const POD_R  = r * 1.08;   // radius from center
   const POD_Y  = 60;          // mid-height
+  const POD_W  = isFinal
+    ? 2 * POD_R * Math.sin(Math.PI / POD_COUNT) * 1.08   // contiguous segments — combined ring
+    : r * 0.36;
 
   const podBodyMat = new THREE.MeshStandardMaterial({
     color: 0x000d1a, roughness: 0.25, metalness: 0.95, envMapIntensity: 1.5
@@ -652,15 +658,28 @@ function buildArena(r) {
 
     scene.add(podGroup);
     _arenaObjs.push(podGroup);
+
+    // Track for floating animation. In the final battle all segments float
+    // perfectly in sync so the merged ring moves as one giant platform.
+    _pods.push({
+      group: podGroup,
+      baseY: POD_Y,
+      phase: isFinal ? 0 : Math.random() * Math.PI * 2,
+      ampY: isFinal ? 4 : 6,
+      baseRotZ: podGroup.rotation.z,
+    });
   }
 
   // ── Connecting support struts between pods and outer ring ─────────────────
+  // Pillars stop short of the pod underside, leaving a visible gap so the
+  // platforms appear to hover above their supports (TRON levitation look).
+  const PILLAR_GAP = 10;
   for (let i = 0; i < POD_COUNT; i++) {
     const pa = (i / POD_COUNT) * Math.PI * 2;
     const strutMat = new THREE.MeshStandardMaterial({ color: 0x000a18, roughness: 0.5, metalness: 0.9 });
-    // Vertical pillar down from pod bottom
-    const pillar = new THREE.Mesh(new THREE.BoxGeometry(6, POD_Y, 6), strutMat);
-    pillar.position.set(Math.cos(pa) * POD_R, POD_Y / 2 - POD_H / 2, Math.sin(pa) * POD_R);
+    const pillarH = POD_Y - POD_H / 2 - PILLAR_GAP;
+    const pillar = new THREE.Mesh(new THREE.BoxGeometry(6, pillarH, 6), strutMat);
+    pillar.position.set(Math.cos(pa) * POD_R, pillarH / 2, Math.sin(pa) * POD_R);
     scene.add(pillar); _arenaObjs.push(pillar);
   }
 
@@ -1446,6 +1465,12 @@ function animateArena(ts) {
   if (rimMesh && rimMesh.material.emissive) {
     rimMesh.material.emissiveIntensity = 3.0 + 0.8 * Math.sin(t * 1.1);
   }
+  // Arena pods gently float / hover, like the platforms in the movie
+  for (let i = 0; i < _pods.length; i++) {
+    const p = _pods[i];
+    p.group.position.y = p.baseY + Math.sin(t * 0.6 + p.phase) * p.ampY;
+    p.group.rotation.z = p.baseRotZ + Math.sin(t * 0.4 + p.phase) * 0.015;
+  }
   // Occasional neon flicker
   if (_arenaObjs.length && Math.random() < 0.004) {
     const strips = _arenaObjs.filter(o => o.isMesh && o.material && o.material.emissive);
@@ -1629,7 +1654,7 @@ socket.on('gameStart', ({ arena: a }) => {
 
 socket.on('finalBattle', ({ arena: a }) => {
   gamePhase = 'finalBattle';
-  buildArena(a.radius);
+  buildArena(a.radius, true);
   buildTileMap(a);
   finalBanner.style.display = 'flex';
   setTimeout(() => { finalBanner.style.display = 'none'; }, 3200);
