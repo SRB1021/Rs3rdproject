@@ -244,13 +244,28 @@ function getHexGeo() {
   if (!_hexGeo) _hexGeo = new THREE.CylinderGeometry(HEX_SIZE * 0.93, HEX_SIZE * 0.93, 4, 6);
   return _hexGeo;
 }
+// Thin glowing seam traced around each tile's edges — the "light grid between
+// dark panels" look from the movie's disc arena floor
+let _hexEdgeGeo = null;
+function getHexEdgeGeo() {
+  if (!_hexEdgeGeo) _hexEdgeGeo = new THREE.EdgesGeometry(getHexGeo());
+  return _hexEdgeGeo;
+}
+// Mostly-matte black panel with only a faint emissive glow — detail comes
+// from the bright edge-line seams, not the face itself
 const _matIntact = new THREE.MeshStandardMaterial({
-  color: 0x001520, emissive: 0x00ccee, emissiveIntensity: 0.6,
-  roughness: 0.2, metalness: 0.9, envMapIntensity: 1.8
+  color: 0x000a10, emissive: 0x00ccee, emissiveIntensity: 0.08,
+  roughness: 0.15, metalness: 0.95, envMapIntensity: 2.2
 });
 const _matCracking = new THREE.MeshStandardMaterial({
-  color: 0x2a0800, emissive: 0xff4400, emissiveIntensity: 1.0,
-  roughness: 0.3, metalness: 0.7, envMapIntensity: 1.0
+  color: 0x1a0500, emissive: 0xff4400, emissiveIntensity: 0.35,
+  roughness: 0.25, metalness: 0.8, envMapIntensity: 1.4
+});
+const _edgeMatIntact = new THREE.LineBasicMaterial({
+  color: 0x00eaff, transparent: true, opacity: 0.85
+});
+const _edgeMatCracking = new THREE.LineBasicMaterial({
+  color: 0xff5500, transparent: true, opacity: 0.95
 });
 
 // ── Procedural textures ─────────────────────────────────────────────────────
@@ -780,14 +795,21 @@ function spawnTileMesh(key, wx, wz, state) {
   mesh.userData.state = state;
   mesh.receiveShadow = true;
   scene.add(mesh);
+
+  const edges = new THREE.LineSegments(getHexEdgeGeo(), state === 0 ? _edgeMatIntact : _edgeMatCracking);
+  edges.rotation.copy(mesh.rotation);
+  edges.position.copy(mesh.position);
+  scene.add(edges);
+
   tileMeshes[key] = mesh;
+  tileMeshes[key + ':edges'] = edges;
 }
 
 function removeTileMesh(key) {
   const m = tileMeshes[key];
-  if (!m) return;
-  scene.remove(m);
-  delete tileMeshes[key];
+  if (m) { scene.remove(m); delete tileMeshes[key]; }
+  const e = tileMeshes[key + ':edges'];
+  if (e) { scene.remove(e); delete tileMeshes[key + ':edges']; }
 }
 
 // ── Player meshes ──────────────────────────────────────────────────────────
@@ -1440,7 +1462,10 @@ function animateTiles(ts) {
   tileData.forEach((t, key) => {
     const mesh = tileMeshes[key];
     if (!mesh || t.state !== 1) return;
-    mesh.material.emissiveIntensity = 0.4 + 0.6 * (0.5 + 0.5 * Math.sin(ts * 0.012));
+    const pulse = 0.5 + 0.5 * Math.sin(ts * 0.012);
+    mesh.material.emissiveIntensity = 0.25 + 0.5 * pulse;
+    const edges = tileMeshes[key + ':edges'];
+    if (edges) edges.material.opacity = 0.6 + 0.4 * pulse;
   });
 }
 
