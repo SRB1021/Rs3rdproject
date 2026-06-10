@@ -1567,8 +1567,8 @@ function updateHUD() {
     const status = p.alive
       ? (p.hasDisc ? '◈ DISC READY' : (p.dodging ? '⚡ DODGE' : (p.blocking ? '🛡 BLOCK' : '◌ disc away')))
       : '✕ DEREZZED';
-    el.innerHTML = `<span class="hud-name">${p.name}${p.id === myId ? ' ◀' : ''}${p.isBot ? ' 🤖' : ''}</span>
-                    <span class="hud-disc">${status}</span>`;
+    el.innerHTML = `<span class="hud-name">${p.name}${p.id === myId ? ' ◀' : ''}${p.isBot ? ' 🤖' : ''}${p.godMode ? ' ★' : ''}</span>
+                    <span class="hud-disc">${status}${p.godMode ? ' · GOD MODE' : ''}</span>`;
     hudPlayers.appendChild(el);
   });
   const alive = Object.values(players).filter(p => p.alive).length;
@@ -1751,7 +1751,10 @@ socket.on('gameOver', ({ winnerId, winnerName }) => {
 // ── Button wiring ──────────────────────────────────────────────────────────
 document.getElementById('createBtn').addEventListener('click', () => {
   Audio.init();
-  socket.emit('createRoom', { name: document.getElementById('nameInput').value.trim() || 'Program-1' });
+  socket.emit('createRoom', {
+    name: document.getElementById('nameInput').value.trim() || 'Program-1',
+    cheatCode: document.getElementById('cheatInput').value.trim()
+  });
 });
 document.getElementById('joinBtnOpen').addEventListener('click', () => {
   const jr = document.getElementById('joinRow');
@@ -1768,7 +1771,8 @@ function doJoin() {
   document.getElementById('joinError').style.display = 'none';
   socket.emit('joinRoom', {
     code: document.getElementById('codeInput').value.trim(),
-    name: document.getElementById('nameInput').value.trim() || 'Program-1'
+    name: document.getElementById('nameInput').value.trim() || 'Program-1',
+    cheatCode: document.getElementById('cheatInput').value.trim()
   });
 }
 

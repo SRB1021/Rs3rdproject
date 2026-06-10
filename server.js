@@ -27,6 +27,8 @@ const HEX_SIZE     = 26;
 const COLORS = ['#00f7ff','#ff6600','#00ff88','#ff00ff','#ffee00','#ff3355','#ff88ff','#00ffcc','#ffaa00','#3399ff','#ff2222','#aaff00'];
 const BOT_NAMES = ['SARK','CLU','RINZLER','JARVIS','DYSON','ABRAXAS','CROM','BIT','RAM','YORI','DUMONT','TESLER'];
 const MAX_PLAYERS = 12;
+const CHEAT_CODE  = '52966!';
+const GOD_SPEED_MULT = 1.6;
 
 const rooms      = {};
 const socketRoom = {};
@@ -120,6 +122,7 @@ function makePlayer(id, idx, isBot) {
     facing:{x:1,y:0},
     score:0,
     isBot: !!isBot,
+    godMode:false,
     blocking:false, botBlockTimer:0,
     fallTimer:0, falling:false,
     botState:'wander', botTimer:1+Math.random(), botTarget:null, botStrafeSign:1,
@@ -396,8 +399,8 @@ function tick(room, dt) {
   for (const p of Object.values(room.players)) {
     if (!p.alive && !inLobby) continue;
 
-    // fall detection
-    if (inGame && p.alive && tm) {
+    // fall detection (god mode players never fall through)
+    if (inGame && p.alive && tm && !p.godMode) {
       const lx=p.x-tm.cx, ly=p.y-tm.cy;
       const frac=worldToHexFrac(lx,ly,tm.size);
       const h=hexRound(frac.q,frac.r);
@@ -413,7 +416,8 @@ function tick(room, dt) {
       }
     }
 
-    const speed = p.blocking ? P_SPEED*0.5 : P_SPEED;
+    let speed = p.blocking ? P_SPEED*0.5 : P_SPEED;
+    if (p.godMode) speed *= GOD_SPEED_MULT;
 
     if (p.dodging && inGame) {
       p.dodgeTimer-=dt; p.x+=p.dodgeVx*dt; p.y+=p.dodgeVy*dt;
@@ -474,6 +478,7 @@ function tick(room, dt) {
 
     for (const other of Object.values(room.players)) {
       if (other.id===p.id||!other.alive) continue;
+      if (other.godMode) continue; // god mode players cannot be hit
       const hx=other.x-d.x,hy=other.y-d.y;
       if (Math.sqrt(hx*hx+hy*hy)<P_R+D_R) {
         if (other.blocking) {
@@ -503,7 +508,7 @@ setInterval(()=>{
       : [];
     io.to(room.code).emit('gameState',{
       players: Object.values(room.players).map(p=>({
-        id:p.id,name:p.name,color:p.color,isBot:p.isBot,
+        id:p.id,name:p.name,color:p.color,isBot:p.isBot,godMode:p.godMode,
         x:p.x,y:p.y,alive:p.alive,hasDisc:p.hasDisc,
         dodging:p.dodging,blocking:p.blocking,fallTimer:p.fallTimer,
         score:p.score,facing:p.facing,
@@ -536,24 +541,26 @@ function leaveRoom(socket) {
 
 io.on('connection', socket=>{
 
-  socket.on('createRoom',({name})=>{
+  socket.on('createRoom',({name,cheatCode})=>{
     const code=genCode(), room=makeRoom(code,socket.id);
     rooms[code]=room;
     const p=makePlayer(socket.id,0,false);
     p.name=String(name||p.name).slice(0,18);
+    if (String(cheatCode||'')===CHEAT_CODE) p.godMode=true;
     const pos=spawnPosCircular(1,room.arena); p.x=pos[0].x; p.y=pos[0].y;
     room.players[socket.id]=p; socketRoom[socket.id]=code;
     socket.join(code);
     socket.emit('roomCreated',{code,playerId:socket.id,player:p,players:Object.values(room.players),state:room.state,arena:room.arena,hostId:socket.id});
   });
 
-  socket.on('joinRoom',({code,name})=>{
+  socket.on('joinRoom',({code,name,cheatCode})=>{
     const upper=String(code).toUpperCase().trim(), room=rooms[upper];
     if (!room) { socket.emit('joinError',{message:'Room not found.'}); return; }
     if (Object.keys(room.players).length>=MAX_PLAYERS) { socket.emit('joinError',{message:`Room is full (${MAX_PLAYERS} max).`}); return; }
     const idx=Object.keys(room.players).length;
     const p=makePlayer(socket.id,idx,false);
     p.name=String(name||p.name).slice(0,18);
+    if (String(cheatCode||'')===CHEAT_CODE) p.godMode=true;
     const pos=spawnPosCircular(idx+1,room.arena); p.x=pos[idx].x; p.y=pos[idx].y;
     room.players[socket.id]=p; socketRoom[socket.id]=upper;
     socket.join(upper);
@@ -613,7 +620,7 @@ io.on('connection', socket=>{
     const room=rooms[code], p=room.players[socket.id];
     if (!p||!p.alive||!p.hasDisc||p.isBot) return;
     if (room.state!=='playing'&&room.state!=='finalBattle') return;
-    p.hasDisc=false; p.disc=makeDisc(p,tx,ty);
+    p.hasDisc=!!p.godMode; p.disc=makeDisc(p,tx,ty);
     io.to(code).emit('discThrown',{playerId:p.id});
   });
 
