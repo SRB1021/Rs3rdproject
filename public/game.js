@@ -1567,8 +1567,8 @@ function updateHUD() {
     const status = p.alive
       ? (p.hasDisc ? '◈ DISC READY' : (p.dodging ? '⚡ DODGE' : (p.blocking ? '🛡 BLOCK' : '◌ disc away')))
       : '✕ DEREZZED';
-    el.innerHTML = `<span class="hud-name">${p.name}${p.id === myId ? ' ◀' : ''}${p.isBot ? ' 🤖' : ''}${p.godMode ? ' ★' : ''}</span>
-                    <span class="hud-disc">${status}${p.godMode ? ' · GOD MODE' : ''}</span>`;
+    el.innerHTML = `<span class="hud-name">${p.name}${p.id === myId ? ' ◀' : ''}${p.isBot ? ' 🤖' : ''}</span>
+                    <span class="hud-disc">${status}</span>`;
     hudPlayers.appendChild(el);
   });
   const alive = Object.values(players).filter(p => p.alive).length;
